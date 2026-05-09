@@ -540,13 +540,23 @@ button svg {
 .filter-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .tool-group button,
 .filter-tabs button {
-  min-height: 38px;
-  padding-inline: 12px;
+  min-height: 34px;
+  gap: 6px;
+  padding-inline: 10px;
+  font-size: 14px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.tool-group button svg,
+.filter-tabs button svg {
+  width: 15px;
+  height: 15px;
 }
 
 .filter-tabs {
@@ -554,9 +564,12 @@ button svg {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #f2f7f1;
+  gap: 2px;
 }
 
 .filter-tabs button {
+  min-width: 50px;
+  padding-inline: 8px;
   border-color: transparent;
   background: transparent;
   color: var(--muted);
@@ -672,14 +685,20 @@ button svg {
   grid-area: actions;
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
   align-items: end;
 }
 
 .page-actions button {
-  width: 32px;
-  min-height: 32px;
+  width: 28px;
+  min-height: 28px;
+  height: 28px;
   padding: 0;
+}
+
+.page-actions button svg {
+  width: 15px;
+  height: 15px;
 }
 
 .spin {
