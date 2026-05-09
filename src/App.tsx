@@ -1,9 +1,14 @@
-import type { ChangeEvent, DragEvent } from 'react'
+import type {
+  ChangeEvent,
+  DragEvent,
+  PointerEvent as ReactPointerEvent,
+} from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDown,
   ArrowUp,
   Camera,
+  Crop,
   Download,
   FileDown,
   FileImage,
@@ -11,6 +16,7 @@ import {
   Layers3,
   LoaderCircle,
   RefreshCcw,
+  RotateCcw,
   RotateCw,
   ScanLine,
   ShieldCheck,
@@ -27,11 +33,20 @@ import {
   downloadDataUrl,
   formatBytes,
   loadImage,
+  normalizeRotation,
   readFileAsDataUrl,
   renderImageVariant,
 } from './lib/image'
 import { exportPagesToPdf } from './lib/pdf'
-import { autoExtractDocument, isOpenCvReady, loadOpenCv } from './lib/scan'
+import {
+  autoExtractDocument,
+  type CornerKey,
+  type CornerPoint,
+  type CornerPoints,
+  isOpenCvReady,
+  loadOpenCv,
+  manualExtractDocument,
+} from './lib/scan'
 
 type ScanPage = {
   id: string
@@ -40,11 +55,14 @@ type ScanPage = {
   baseDataUrl: string
   outputDataUrl: string
   sourceSize: number
+  originalWidth: number
+  originalHeight: number
   width: number
   height: number
   filter: ScanFilterId
   rotation: number
   scanned: boolean
+  cropCorners?: CornerPoints
 }
 
 type BusyState = {
@@ -53,6 +71,13 @@ type BusyState = {
 }
 
 const DEFAULT_FILTER: ScanFilterId = 'clean'
+
+const CORNERS: Array<{ key: CornerKey; label: string }> = [
+  { key: 'topLeftCorner', label: '左上角' },
+  { key: 'topRightCorner', label: '右上角' },
+  { key: 'bottomRightCorner', label: '右下角' },
+  { key: 'bottomLeftCorner', label: '左下角' },
+]
 
 function App() {
   const [pages, setPages] = useState<ScanPage[]>([])
@@ -63,15 +88,27 @@ function App() {
   const [openCvState, setOpenCvState] = useState(
     isOpenCvReady() ? 'ready' : 'idle',
   )
+  const [frameEditorPageId, setFrameEditorPageId] = useState<string | null>(
+    null,
+  )
+  const [draftCorners, setDraftCorners] = useState<CornerPoints | null>(null)
+  const [draggingCorner, setDraggingCorner] = useState<CornerKey | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const frameCanvasRef = useRef<HTMLDivElement>(null)
 
   const selectedPage = useMemo(
     () => pages.find((page) => page.id === selectedId) ?? pages[0] ?? null,
     [pages, selectedId],
   )
   const totalSize = pages.reduce((sum, page) => sum + page.sourceSize, 0)
+  const isFrameEditing = Boolean(
+    selectedPage &&
+      draftCorners &&
+      selectedPage.id === frameEditorPageId &&
+      !busy,
+  )
 
   useEffect(() => {
     return () => {
@@ -81,6 +118,8 @@ function App() {
 
   async function addImagePage(dataUrl: string, name: string, sourceSize = 0) {
     const image = await loadImage(dataUrl)
+    const originalWidth = image.naturalWidth || image.width
+    const originalHeight = image.naturalHeight || image.height
     const rendered = await renderImageVariant(dataUrl, DEFAULT_FILTER)
     const page: ScanPage = {
       id: createId(),
@@ -89,8 +128,10 @@ function App() {
       baseDataUrl: dataUrl,
       outputDataUrl: rendered.dataUrl,
       sourceSize,
-      width: image.naturalWidth || rendered.width,
-      height: image.naturalHeight || rendered.height,
+      originalWidth,
+      originalHeight,
+      width: rendered.width,
+      height: rendered.height,
       filter: DEFAULT_FILTER,
       rotation: 0,
       scanned: false,
@@ -107,9 +148,7 @@ function App() {
   }
 
   async function importFiles(inputFiles: File[]) {
-    const files = inputFiles.filter((file) =>
-      file.type.startsWith('image/'),
-    )
+    const files = inputFiles.filter((file) => file.type.startsWith('image/'))
 
     if (files.length === 0) {
       setNotice('请选择 JPG、PNG、WebP 等图片文件')
@@ -173,7 +212,9 @@ function App() {
 
     try {
       await applyVariant(selectedPage, { filter })
-      setNotice(`已切换到 ${FILTER_PRESETS.find((item) => item.id === filter)?.label}`)
+      setNotice(
+        `已切换到 ${FILTER_PRESETS.find((item) => item.id === filter)?.label}`,
+      )
     } catch (error) {
       setNotice(getErrorMessage(error))
     } finally {
@@ -181,18 +222,17 @@ function App() {
     }
   }
 
-  async function handleRotate() {
-    if (!selectedPage) {
-      return
-    }
-
-    setBusy({ pageId: selectedPage.id, label: '正在旋转页面' })
+  async function rotatePage(page: ScanPage, degrees: -90 | 90) {
+    setBusy({
+      pageId: page.id,
+      label: degrees > 0 ? '正在右转页面' : '正在左转页面',
+    })
 
     try {
-      await applyVariant(selectedPage, {
-        rotation: (selectedPage.rotation + 90) % 360,
+      await applyVariant(page, {
+        rotation: normalizeRotation(page.rotation + degrees),
       })
-      setNotice('页面已顺时针旋转')
+      setNotice(degrees > 0 ? '页面已向右旋转' : '页面已向左旋转')
     } catch (error) {
       setNotice(getErrorMessage(error))
     } finally {
@@ -205,6 +245,8 @@ function App() {
       return
     }
 
+    setFrameEditorPageId(null)
+    setDraftCorners(null)
     setBusy({ pageId: selectedPage.id, label: '正在识别纸张边缘' })
 
     try {
@@ -241,11 +283,90 @@ function App() {
     }
   }
 
+  function openFrameEditor() {
+    if (!selectedPage) {
+      return
+    }
+
+    setFrameEditorPageId(selectedPage.id)
+    setDraftCorners(
+      cloneCorners(selectedPage.cropCorners ?? getDefaultCorners(selectedPage)),
+    )
+    setNotice('拖动四个角点贴合纸张边缘，然后点击应用边框')
+  }
+
+  async function handleApplyFrame() {
+    if (!selectedPage || !draftCorners) {
+      return
+    }
+
+    const savedCorners = cloneCorners(draftCorners)
+    setBusy({ pageId: selectedPage.id, label: '正在应用手动边框' })
+
+    try {
+      if (!isOpenCvReady()) {
+        setOpenCvState('loading')
+        setNotice('正在加载 OpenCV.js，首次可能需要几秒')
+        await loadOpenCv()
+      }
+
+      setOpenCvState('ready')
+      const extracted = await manualExtractDocument(
+        selectedPage.originalDataUrl,
+        savedCorners,
+      )
+      await applyVariant(
+        {
+          ...selectedPage,
+          baseDataUrl: extracted.dataUrl,
+          rotation: 0,
+        },
+        {
+          baseDataUrl: extracted.dataUrl,
+          rotation: 0,
+        },
+      )
+      setPages((current) =>
+        current.map((page) =>
+          page.id === selectedPage.id
+            ? { ...page, scanned: true, cropCorners: savedCorners }
+            : page,
+        ),
+      )
+      setFrameEditorPageId(null)
+      setDraftCorners(null)
+      setNotice('已按手动边框完成透视矫正')
+    } catch (error) {
+      setNotice(`${getErrorMessage(error)}，请微调边框后重试`)
+      setOpenCvState(isOpenCvReady() ? 'ready' : 'idle')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  function handleCancelFrameEditor() {
+    setFrameEditorPageId(null)
+    setDraftCorners(null)
+    setDraggingCorner(null)
+    setNotice('已退出手动边框编辑')
+  }
+
+  function handleResetFrameCorners() {
+    if (!selectedPage) {
+      return
+    }
+
+    setDraftCorners(getDefaultCorners(selectedPage))
+    setNotice('边框已重置到图片四周')
+  }
+
   async function handleResetPage() {
     if (!selectedPage) {
       return
     }
 
+    setFrameEditorPageId(null)
+    setDraftCorners(null)
     setBusy({ pageId: selectedPage.id, label: '正在还原页面' })
 
     try {
@@ -262,7 +383,9 @@ function App() {
       )
       setPages((current) =>
         current.map((page) =>
-          page.id === selectedPage.id ? { ...page, scanned: false } : page,
+          page.id === selectedPage.id
+            ? { ...page, scanned: false, cropCorners: undefined }
+            : page,
         ),
       )
       setNotice('已还原到原始图片')
@@ -368,6 +491,52 @@ function App() {
       next.splice(nextIndex, 0, page)
       return next
     })
+  }
+
+  function startCornerDrag(
+    event: ReactPointerEvent<HTMLButtonElement>,
+    corner: CornerKey,
+  ) {
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    setDraggingCorner(corner)
+    updateDraftCorner(corner, event.clientX, event.clientY)
+  }
+
+  function handleCornerMove(event: ReactPointerEvent<HTMLElement>) {
+    if (!draggingCorner) {
+      return
+    }
+
+    updateDraftCorner(draggingCorner, event.clientX, event.clientY)
+  }
+
+  function updateDraftCorner(corner: CornerKey, clientX: number, clientY: number) {
+    const rect = frameCanvasRef.current?.getBoundingClientRect()
+
+    if (!rect || !selectedPage || rect.width === 0 || rect.height === 0) {
+      return
+    }
+
+    const x = clamp(
+      ((clientX - rect.left) / rect.width) * selectedPage.originalWidth,
+      0,
+      selectedPage.originalWidth,
+    )
+    const y = clamp(
+      ((clientY - rect.top) / rect.height) * selectedPage.originalHeight,
+      0,
+      selectedPage.originalHeight,
+    )
+
+    setDraftCorners((current) =>
+      current
+        ? {
+            ...current,
+            [corner]: { x, y },
+          }
+        : current,
+    )
   }
 
   function exportCurrentPng() {
@@ -528,7 +697,61 @@ function App() {
           onDragOver={(event) => event.preventDefault()}
           onDrop={(event) => void handleDrop(event)}
         >
-          {selectedPage ? (
+          {isFrameEditing && selectedPage && draftCorners ? (
+            <div className="frame-editor">
+              <div
+                ref={frameCanvasRef}
+                className="frame-editor-canvas"
+                onPointerMove={handleCornerMove}
+                onPointerUp={() => setDraggingCorner(null)}
+                onPointerCancel={() => setDraggingCorner(null)}
+              >
+                <img src={selectedPage.originalDataUrl} alt={selectedPage.name} />
+                <div className="frame-overlay">
+                  <svg
+                    className="frame-polygon"
+                    viewBox="0 0 100 100"
+                    preserveAspectRatio="none"
+                    aria-hidden="true"
+                  >
+                    <polygon points={toSvgPoints(draftCorners, selectedPage)} />
+                  </svg>
+                  {CORNERS.map((corner) => (
+                    <button
+                      key={corner.key}
+                      className="corner-handle"
+                      type="button"
+                      style={getCornerStyle(draftCorners[corner.key], selectedPage)}
+                      onPointerDown={(event) => startCornerDrag(event, corner.key)}
+                      onPointerMove={handleCornerMove}
+                      onPointerUp={() => setDraggingCorner(null)}
+                      onPointerCancel={() => setDraggingCorner(null)}
+                      aria-label={`拖动${corner.label}`}
+                      title={`拖动${corner.label}`}
+                    >
+                      <span />
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="frame-editor-actions">
+                <span>拖动四个角点贴合纸张边缘</span>
+                <button type="button" onClick={handleResetFrameCorners}>
+                  重置边框
+                </button>
+                <button type="button" onClick={handleCancelFrameEditor}>
+                  退出
+                </button>
+                <button
+                  className="apply-frame-action"
+                  type="button"
+                  onClick={() => void handleApplyFrame()}
+                >
+                  应用边框
+                </button>
+              </div>
+            </div>
+          ) : selectedPage ? (
             <>
               <img src={selectedPage.outputDataUrl} alt={selectedPage.name} />
               {busy?.pageId === selectedPage.id && (
@@ -565,12 +788,30 @@ function App() {
             </button>
             <button
               type="button"
-              onClick={() => void handleRotate()}
+              onClick={openFrameEditor}
               disabled={!selectedPage || Boolean(busy)}
-              title="顺时针旋转当前页面"
+              title="手动拖动四角边框并透视矫正"
+            >
+              <Crop aria-hidden="true" />
+              手动边框
+            </button>
+            <button
+              type="button"
+              onClick={() => selectedPage && void rotatePage(selectedPage, -90)}
+              disabled={!selectedPage || Boolean(busy)}
+              title="向左旋转当前页面"
+            >
+              <RotateCcw aria-hidden="true" />
+              左转
+            </button>
+            <button
+              type="button"
+              onClick={() => selectedPage && void rotatePage(selectedPage, 90)}
+              disabled={!selectedPage || Boolean(busy)}
+              title="向右旋转当前页面"
             >
               <RotateCw aria-hidden="true" />
-              旋转
+              右转
             </button>
             <button
               type="button"
@@ -601,8 +842,17 @@ function App() {
         </div>
 
         <footer className="workspace-footer">
-          <span>OpenCV: {openCvState === 'ready' ? '已就绪' : openCvState === 'loading' ? '加载中' : '按需加载'}</span>
-          <span>{selectedPage ? `${selectedPage.width} x ${selectedPage.height}` : '无页面'}</span>
+          <span>
+            OpenCV:{' '}
+            {openCvState === 'ready'
+              ? '已就绪'
+              : openCvState === 'loading'
+                ? '加载中'
+                : '按需加载'}
+          </span>
+          <span>
+            {selectedPage ? `${selectedPage.width} x ${selectedPage.height}` : '无页面'}
+          </span>
           <span>{selectedPage?.scanned ? '已透视矫正' : '原图/滤镜模式'}</span>
         </footer>
       </section>
@@ -638,8 +888,13 @@ function App() {
                 <img src={page.outputDataUrl} alt="" />
               </button>
               <div className="page-meta">
-                <strong>{index + 1}. {page.name}</strong>
-                <span>{page.scanned ? '已裁切' : '未裁切'} · {page.filter}</span>
+                <strong>
+                  {index + 1}. {page.name}
+                </strong>
+                <span>
+                  {page.scanned ? '已裁切' : '未裁切'} · {page.filter} ·{' '}
+                  {page.rotation}°
+                </span>
               </div>
               <div className="page-actions">
                 <button
@@ -660,6 +915,22 @@ function App() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => void rotatePage(page, -90)}
+                  disabled={Boolean(busy)}
+                  title="左转"
+                >
+                  <RotateCcw aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void rotatePage(page, 90)}
+                  disabled={Boolean(busy)}
+                  title="右转"
+                >
+                  <RotateCw aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
                   onClick={() => deletePage(page.id)}
                   disabled={Boolean(busy)}
                   title="删除"
@@ -673,6 +944,56 @@ function App() {
       </aside>
     </main>
   )
+}
+
+function getDefaultCorners(page: ScanPage): CornerPoints {
+  const marginX = page.originalWidth * 0.07
+  const marginY = page.originalHeight * 0.07
+
+  return {
+    topLeftCorner: { x: marginX, y: marginY },
+    topRightCorner: { x: page.originalWidth - marginX, y: marginY },
+    bottomLeftCorner: { x: marginX, y: page.originalHeight - marginY },
+    bottomRightCorner: {
+      x: page.originalWidth - marginX,
+      y: page.originalHeight - marginY,
+    },
+  }
+}
+
+function cloneCorners(corners: CornerPoints): CornerPoints {
+  return {
+    topLeftCorner: { ...corners.topLeftCorner },
+    topRightCorner: { ...corners.topRightCorner },
+    bottomLeftCorner: { ...corners.bottomLeftCorner },
+    bottomRightCorner: { ...corners.bottomRightCorner },
+  }
+}
+
+function toSvgPoints(corners: CornerPoints, page: ScanPage) {
+  return [
+    corners.topLeftCorner,
+    corners.topRightCorner,
+    corners.bottomRightCorner,
+    corners.bottomLeftCorner,
+  ]
+    .map((point) => {
+      const x = (point.x / page.originalWidth) * 100
+      const y = (point.y / page.originalHeight) * 100
+      return `${x},${y}`
+    })
+    .join(' ')
+}
+
+function getCornerStyle(point: CornerPoint, page: ScanPage) {
+  return {
+    left: `${(point.x / page.originalWidth) * 100}%`,
+    top: `${(point.y / page.originalHeight) * 100}%`,
+  }
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max)
 }
 
 function createId() {

@@ -1,5 +1,15 @@
 import { fitWithin, loadImage } from './image'
 
+export type CornerPoint = { x: number; y: number }
+
+export type CornerKey =
+  | 'topLeftCorner'
+  | 'topRightCorner'
+  | 'bottomLeftCorner'
+  | 'bottomRightCorner'
+
+export type CornerPoints = Record<CornerKey, CornerPoint>
+
 declare global {
   interface Window {
     cv?: {
@@ -28,7 +38,7 @@ export async function loadOpenCv(timeoutMs = 25000) {
     return window.__webScanKingOpenCvPromise
   }
 
-  window.__webScanKingOpenCvPromise = new Promise<void>((resolve, reject) => {
+  const openCvPromise = new Promise<void>((resolve, reject) => {
     const timeout = window.setTimeout(() => {
       reject(new Error('OpenCV.js 加载超时，请检查网络后重试'))
     }, timeoutMs)
@@ -76,7 +86,14 @@ export async function loadOpenCv(timeoutMs = 25000) {
     document.body.appendChild(script)
   })
 
-  return window.__webScanKingOpenCvPromise
+  window.__webScanKingOpenCvPromise = openCvPromise
+
+  try {
+    await openCvPromise
+  } catch (error) {
+    window.__webScanKingOpenCvPromise = undefined
+    throw error
+  }
 }
 
 export function isOpenCvReady() {
@@ -107,4 +124,64 @@ export async function autoExtractDocument(
     width: canvas.width,
     height: canvas.height,
   }
+}
+
+export async function manualExtractDocument(
+  dataUrl: string,
+  cornerPoints: CornerPoints,
+): Promise<AutoScanResult> {
+  await loadOpenCv()
+
+  const [{ default: JScanify }, image] = await Promise.all([
+    import('jscanify/client'),
+    loadImage(dataUrl),
+  ])
+  const scanner = new JScanify()
+  const target = estimateManualTargetSize(cornerPoints)
+  const canvas = scanner.extractPaper(
+    image,
+    target.width,
+    target.height,
+    cornerPoints,
+  )
+
+  if (!canvas) {
+    throw new Error('手动边框无法生成有效扫描结果')
+  }
+
+  return {
+    dataUrl: canvas.toDataURL('image/jpeg', 0.92),
+    width: canvas.width,
+    height: canvas.height,
+  }
+}
+
+function estimateManualTargetSize(cornerPoints: CornerPoints) {
+  const topWidth = distance(
+    cornerPoints.topLeftCorner,
+    cornerPoints.topRightCorner,
+  )
+  const bottomWidth = distance(
+    cornerPoints.bottomLeftCorner,
+    cornerPoints.bottomRightCorner,
+  )
+  const leftHeight = distance(
+    cornerPoints.topLeftCorner,
+    cornerPoints.bottomLeftCorner,
+  )
+  const rightHeight = distance(
+    cornerPoints.topRightCorner,
+    cornerPoints.bottomRightCorner,
+  )
+
+  return fitWithin(
+    Math.max(topWidth, bottomWidth),
+    Math.max(leftHeight, rightHeight),
+    1654,
+    2339,
+  )
+}
+
+function distance(first: CornerPoint, second: CornerPoint) {
+  return Math.hypot(first.x - second.x, first.y - second.y)
 }
