@@ -1,0 +1,40 @@
+:root {
+  --app-bg: #f4f8f1;
+  --surface: #fbfff8;
+  --ink: #20352c;
+  --muted: #67756b;
+  --line: #d8e0d4;
+  --line-strong: #aebcaf;
+  --accent-green: #2a7a66;
+  --accent-blue: #2c7192;
+  --accent-coral: #ef7050;
+  --display: Georgia, 'Times New Roman', serif;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    sans-serif;
+  font-family: var(--sans);
+  color: var(--ink);
+  background: var(--app-bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 320px;
+  min-height: 100%;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+}
+
+#root {
+  min-height: 100vh;
+}
