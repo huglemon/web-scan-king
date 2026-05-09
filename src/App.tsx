@@ -574,6 +574,9 @@ function App() {
     }
   }
 
+  const previewState =
+    isFrameEditing && selectedPage ? 'editing' : selectedPage ? 'page' : 'empty'
+
   return (
     <main className="scanner-shell">
       <input
@@ -693,6 +696,7 @@ function App() {
 
         <div
           className="preview-stage"
+          data-preview-state={previewState}
           aria-busy={Boolean(busy)}
           onDragOver={(event) => event.preventDefault()}
           onDrop={(event) => void handleDrop(event)}

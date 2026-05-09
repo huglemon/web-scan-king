@@ -12,6 +12,7 @@
 .side-panel,
 .workspace {
   min-width: 0;
+  min-height: 0;
 }
 
 .side-panel {
@@ -258,7 +259,7 @@ button svg {
 
 .workspace {
   display: grid;
-  grid-template-rows: auto minmax(360px, 1fr) auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   gap: 18px;
   padding: 20px;
 }
@@ -308,16 +309,27 @@ button svg {
 
 .preview-stage {
   position: relative;
-  min-height: 360px;
+  min-width: 0;
+  min-height: 0;
   display: grid;
   place-items: center;
   overflow: hidden;
+  padding: 18px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   background:
     linear-gradient(135deg, rgba(43, 116, 146, 0.12), transparent 28%),
     linear-gradient(315deg, rgba(239, 112, 80, 0.14), transparent 26%),
     #f9fbf7;
+}
+
+.preview-stage[data-preview-state='empty'] {
+  min-height: 360px;
+}
+
+.preview-stage[data-preview-state='page'],
+.preview-stage[data-preview-state='editing'] {
+  background: #f8fbf6;
 }
 
 .preview-stage::before {
@@ -329,15 +341,21 @@ button svg {
   pointer-events: none;
 }
 
-.preview-stage img {
+.preview-stage[data-preview-state='page']::before,
+.preview-stage[data-preview-state='editing']::before {
+  content: none;
+}
+
+.preview-stage > img {
   position: relative;
   z-index: 1;
-  max-width: min(86%, 900px);
-  max-height: calc(100vh - 265px);
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   object-fit: contain;
-  border: 1px solid rgba(45, 61, 53, 0.18);
-  border-radius: 6px;
-  background: #ffffff;
+  filter: drop-shadow(0 18px 38px rgba(34, 53, 44, 0.14));
 }
 
 .frame-editor {
@@ -720,6 +738,28 @@ button svg {
   }
 }
 
+@media (min-width: 1181px) {
+  .scanner-shell {
+    height: 100dvh;
+    min-height: 100dvh;
+    overflow: hidden;
+  }
+
+  .left-panel,
+  .workspace,
+  .page-panel {
+    max-height: 100dvh;
+  }
+
+  .left-panel {
+    overflow: auto;
+  }
+
+  .workspace {
+    overflow: hidden;
+  }
+}
+
 @media (max-width: 1180px) {
   .scanner-shell {
     grid-template-columns: 260px minmax(0, 1fr);
@@ -776,7 +816,7 @@ button svg {
     flex: 1 1 calc(33.333% - 8px);
   }
 
-  .preview-stage img {
+  .preview-stage > img {
     max-height: 48vh;
   }
 
