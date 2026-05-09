@@ -271,10 +271,12 @@ function App() {
       )
       setPages((current) =>
         current.map((page) =>
-          page.id === selectedPage.id ? { ...page, scanned: true } : page,
+          page.id === selectedPage.id
+            ? { ...page, scanned: true, cropCorners: extracted.cropCorners }
+            : page,
         ),
       )
-      setNotice('已自动裁切并完成透视矫正')
+      setNotice('已自动裁切并记录边框，可进入手动边框继续微调')
     } catch (error) {
       setNotice(`${getErrorMessage(error)}，已保留原图处理`)
       setOpenCvState(isOpenCvReady() ? 'ready' : 'idle')

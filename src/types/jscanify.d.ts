@@ -14,6 +14,10 @@ declare module 'jscanify/client' {
       options?: { color?: string; thickness?: number },
     ): HTMLCanvasElement
 
+    findPaperContour(image: unknown): unknown | null
+
+    getCornerPoints(contour: unknown): Partial<CornerPoints>
+
     extractPaper(
       image: HTMLImageElement | HTMLCanvasElement,
       resultWidth: number,
