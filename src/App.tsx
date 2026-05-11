@@ -9,6 +9,7 @@ import {
   ArrowDown,
   ArrowUp,
   Camera,
+  X,
   Crop,
   Download,
   FileDown,
@@ -48,7 +49,7 @@ import {
   readFileAsDataUrl,
   renderImageVariant,
 } from './lib/image'
-import { exportPagesToPdf } from './lib/pdf'
+import { createPagesPdfBlob, exportPagesToPdf } from './lib/pdf'
 import {
   autoExtractDocument,
   type CornerKey,
@@ -89,6 +90,11 @@ type DraftStrengthState = {
   value: number
 } | null
 
+type PdfPreviewState = {
+  url: string
+  fileName: string
+} | null
+
 type MobileToolTab = 'quick' | 'filters' | 'pages' | 'export'
 type FrameDragState =
   | { type: 'corner'; corner: CornerKey }
@@ -110,6 +116,8 @@ const MOBILE_FILTER_IDS = new Set<ScanFilterId>([
 const MOBILE_FILTER_PRESETS = FILTER_PRESETS.filter((preset) =>
   MOBILE_FILTER_IDS.has(preset.id),
 )
+const IS_WECHAT_BROWSER =
+  /MicroMessenger/i.test(globalThis.navigator?.userAgent ?? '')
 
 const CORNERS: Array<{ key: CornerKey; label: string }> = [
   { key: 'topLeftCorner', label: '左上角' },
@@ -154,6 +162,7 @@ function App() {
   const [frameDrag, setFrameDrag] = useState<FrameDragState | null>(null)
   const [frameImageSize, setFrameImageSize] = useState<FrameSize | null>(null)
   const [draftStrength, setDraftStrength] = useState<DraftStrengthState>(null)
+  const [pdfPreview, setPdfPreview] = useState<PdfPreviewState>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const frameCanvasRef = useRef<HTMLDivElement>(null)
@@ -193,6 +202,14 @@ function App() {
     activeDraftStrength ??
     selectedPage?.enhanceStrength ??
     DEFAULT_ENHANCE_STRENGTH
+
+  useEffect(() => {
+    return () => {
+      if (pdfPreview?.url) {
+        URL.revokeObjectURL(pdfPreview.url)
+      }
+    }
+  }, [pdfPreview?.url])
 
   useEffect(() => {
     const preview = mobilePreviewRef.current
@@ -803,19 +820,27 @@ function App() {
     }
 
     const pageNumber = selectedIndex >= 0 ? selectedIndex + 1 : 1
+    const fileName =
+      `${getExportBaseName(selectedPage.name, `scan-page-${pageNumber}`)}.pdf`
 
     setBusy({ pageId: selectedPage.id, label: '正在生成当前页 PDF' })
 
     try {
-      await exportPagesToPdf(
-        [
-          {
-            dataUrl: selectedPage.outputDataUrl,
-            name: selectedPage.name,
-          },
-        ],
-        `${getExportBaseName(selectedPage.name, `scan-page-${pageNumber}`)}.pdf`,
-      )
+      const pdfPages = [
+        {
+          dataUrl: selectedPage.outputDataUrl,
+          name: selectedPage.name,
+        },
+      ]
+
+      if (IS_WECHAT_BROWSER) {
+        const blob = await createPagesPdfBlob(pdfPages, fileName)
+        openPdfPreview(blob, fileName)
+        setNotice('已生成 PDF 预览，微信内不再触发下载')
+        return
+      }
+
+      await exportPagesToPdf(pdfPages, fileName)
       setNotice('当前页面已导出为 PDF')
     } catch (error) {
       setNotice(getErrorMessage(error))
@@ -856,19 +881,48 @@ function App() {
     setBusy({ label: '正在生成全部页面 PDF' })
 
     try {
-      await exportPagesToPdf(
-        pages.map((page) => ({
-          dataUrl: page.outputDataUrl,
-          name: page.name,
-        })),
-        `scan-${new Date().toISOString().slice(0, 10)}.pdf`,
-      )
+      const pdfPages = pages.map((page) => ({
+        dataUrl: page.outputDataUrl,
+        name: page.name,
+      }))
+      const fileName = `scan-${new Date().toISOString().slice(0, 10)}.pdf`
+
+      if (IS_WECHAT_BROWSER) {
+        const blob = await createPagesPdfBlob(pdfPages, fileName)
+        openPdfPreview(blob, fileName)
+        setNotice('已生成多页 PDF 预览，微信内不再触发下载')
+        return
+      }
+
+      await exportPagesToPdf(pdfPages, fileName)
       setNotice('全部页面 PDF 已生成')
     } catch (error) {
       setNotice(getErrorMessage(error))
     } finally {
       setBusy(null)
     }
+  }
+
+  function openPdfPreview(blob: Blob, fileName: string) {
+    const url = URL.createObjectURL(blob)
+
+    setPdfPreview((current) => {
+      if (current?.url) {
+        URL.revokeObjectURL(current.url)
+      }
+
+      return { url, fileName }
+    })
+  }
+
+  function closePdfPreview() {
+    setPdfPreview((current) => {
+      if (current?.url) {
+        URL.revokeObjectURL(current.url)
+      }
+
+      return null
+    })
   }
 
   const previewState =
@@ -950,23 +1004,25 @@ function App() {
         </div>
 
         <div className="export-stack">
-          <button
-            type="button"
-            onClick={exportCurrentImage}
-            disabled={!selectedPage || Boolean(busy)}
-            title="导出当前页 JPG"
-          >
-            <Download aria-hidden="true" />
-            当前页图片
-          </button>
+          {!IS_WECHAT_BROWSER && (
+            <button
+              type="button"
+              onClick={exportCurrentImage}
+              disabled={!selectedPage || Boolean(busy)}
+              title="导出当前页 JPG"
+            >
+              <Download aria-hidden="true" />
+              当前页图片
+            </button>
+          )}
           <button
             type="button"
             onClick={() => void exportAllPdf()}
             disabled={pages.length === 0 || Boolean(busy)}
-            title="导出所有页面 PDF"
+            title={IS_WECHAT_BROWSER ? '预览所有页面 PDF' : '导出所有页面 PDF'}
           >
             <FileDown aria-hidden="true" />
-            多页 PDF
+            {IS_WECHAT_BROWSER ? '预览 PDF' : '多页 PDF'}
           </button>
         </div>
 
@@ -1495,41 +1551,45 @@ function App() {
           {mobileToolTab === 'export' && (
             <div className="mobile-tool-panel" role="tabpanel">
               <div className="mobile-export-row">
-                <button
-                  type="button"
-                  onClick={exportCurrentImage}
-                  disabled={!selectedPage || Boolean(busy)}
-                  title="导出当前页 JPG"
-                >
-                  <Download aria-hidden="true" />
-                  当前页图片
-                </button>
+                {!IS_WECHAT_BROWSER && (
+                  <button
+                    type="button"
+                    onClick={exportCurrentImage}
+                    disabled={!selectedPage || Boolean(busy)}
+                    title="导出当前页 JPG"
+                  >
+                    <Download aria-hidden="true" />
+                    当前页图片
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => void exportCurrentPdf()}
                   disabled={!selectedPage || Boolean(busy)}
-                  title="导出当前页 PDF"
+                  title={IS_WECHAT_BROWSER ? '预览当前页 PDF' : '导出当前页 PDF'}
                 >
                   <FileDown aria-hidden="true" />
-                  当前页 PDF
+                  {IS_WECHAT_BROWSER ? '预览当前页 PDF' : '当前页 PDF'}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => void exportAllImages()}
-                  disabled={pages.length === 0 || Boolean(busy)}
-                  title="导出全部页面图片"
-                >
-                  <FileImage aria-hidden="true" />
-                  全部图片
-                </button>
+                {!IS_WECHAT_BROWSER && (
+                  <button
+                    type="button"
+                    onClick={() => void exportAllImages()}
+                    disabled={pages.length === 0 || Boolean(busy)}
+                    title="导出全部页面图片"
+                  >
+                    <FileImage aria-hidden="true" />
+                    全部图片
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => void exportAllPdf()}
                   disabled={pages.length === 0 || Boolean(busy)}
-                  title="导出全部页面 PDF"
+                  title={IS_WECHAT_BROWSER ? '预览全部页面 PDF' : '导出全部页面 PDF'}
                 >
                   <FileDown aria-hidden="true" />
-                  全部 PDF
+                  {IS_WECHAT_BROWSER ? '预览全部 PDF' : '全部 PDF'}
                 </button>
               </div>
             </div>
@@ -1622,6 +1682,37 @@ function App() {
           ))}
         </div>
       </aside>
+
+      {pdfPreview && (
+        <div className="pdf-preview-overlay" role="dialog" aria-modal="true">
+          <div className="pdf-preview-panel">
+            <header className="pdf-preview-header">
+              <div>
+                <p className="eyebrow">PDF 预览</p>
+                <h2>{pdfPreview.fileName}</h2>
+              </div>
+              <button
+                type="button"
+                onClick={closePdfPreview}
+                title="关闭 PDF 预览"
+                aria-label="关闭 PDF 预览"
+              >
+                <X aria-hidden="true" />
+              </button>
+            </header>
+            <iframe
+              title={pdfPreview.fileName}
+              src={pdfPreview.url}
+              className="pdf-preview-frame"
+            />
+            {IS_WECHAT_BROWSER && (
+              <p className="pdf-preview-note">
+                微信内已隐藏图片下载。若需要作为文件转发，请使用浏览器打开或后续接入服务端文件链接。
+              </p>
+            )}
+          </div>
+        </div>
+      )}
     </main>
   )
 }

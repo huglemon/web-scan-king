@@ -44,6 +44,15 @@ export async function exportPagesToPdf(
   pages: PdfPageInput[],
   fileName = 'scan-document.pdf',
 ) {
+  const blob = await createPagesPdfBlob(pages, fileName)
+
+  downloadPdfBlob(blob, fileName)
+}
+
+export async function createPagesPdfBlob(
+  pages: PdfPageInput[],
+  fileName = 'scan-document.pdf',
+) {
   if (pages.length === 0) {
     throw new Error('没有可导出的页面')
   }
@@ -78,7 +87,7 @@ export async function exportPagesToPdf(
     )
   }
 
-  pdf.save(fileName)
+  return pdf.output('blob')
 }
 
 function getImageFormat(dataUrl: string) {
@@ -87,4 +96,16 @@ function getImageFormat(dataUrl: string) {
   }
 
   return 'JPEG'
+}
+
+function downloadPdfBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+
+  link.href = url
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
 }

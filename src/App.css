@@ -516,6 +516,66 @@ button svg {
   background: var(--accent-green);
 }
 
+.pdf-preview-overlay {
+  position: fixed;
+  z-index: 40;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(18, 32, 25, 0.42);
+}
+
+.pdf-preview-panel {
+  width: min(980px, 100%);
+  height: min(860px, 100%);
+  min-height: 420px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(32, 53, 44, 0.24);
+}
+
+.pdf-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.pdf-preview-header h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+}
+
+.pdf-preview-header button {
+  width: 38px;
+  min-height: 38px;
+  padding: 0;
+}
+
+.pdf-preview-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #f5f6f1;
+}
+
+.pdf-preview-note {
+  margin: 0;
+  padding: 10px 16px;
+  color: var(--muted);
+  background: #f8faf6;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .preview-busy {
   position: absolute;
   z-index: 2;
@@ -1492,6 +1552,25 @@ button svg {
     min-height: 36px;
     padding-inline: 8px;
     font-size: 12px;
+  }
+
+  .pdf-preview-overlay {
+    padding: 0;
+  }
+
+  .pdf-preview-panel {
+    width: 100%;
+    height: 100%;
+    min-height: 100%;
+    border-radius: 0;
+  }
+
+  .pdf-preview-header {
+    padding: 12px;
+  }
+
+  .pdf-preview-header h2 {
+    font-size: 15px;
   }
 }
 
