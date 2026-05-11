@@ -25,6 +25,9 @@ const OPEN_CV_URL = 'https://docs.opencv.org/4.7.0/opencv.js'
 const OPEN_CV_SCRIPT_ID = 'web-scan-king-opencv'
 const DETECTION_MAX_EDGE = 1280
 const MIN_DOCUMENT_AREA_RATIO = 0.045
+const MAX_DOCUMENT_AREA_RATIO = 0.92
+const FULL_FRAME_AREA_RATIO = 0.86
+const EDGE_TOUCH_TOLERANCE_RATIO = 0.012
 
 export type ExtractDocumentResult = {
   dataUrl: string
@@ -616,6 +619,19 @@ function scoreCorners(
   imageWidth: number,
   imageHeight: number,
 ) {
+  const bounds = getCornerBounds(corners)
+  const edgeToleranceX = imageWidth * EDGE_TOUCH_TOLERANCE_RATIO
+  const edgeToleranceY = imageHeight * EDGE_TOUCH_TOLERANCE_RATIO
+
+  if (
+    bounds.minX < -edgeToleranceX ||
+    bounds.minY < -edgeToleranceY ||
+    bounds.maxX > imageWidth + edgeToleranceX ||
+    bounds.maxY > imageHeight + edgeToleranceY
+  ) {
+    return null
+  }
+
   const quadArea = polygonArea([
     corners.topLeftCorner,
     corners.topRightCorner,
@@ -624,11 +640,20 @@ function scoreCorners(
   ])
   const imageArea = imageWidth * imageHeight
   const areaRatio = quadArea / imageArea
+  const touchesLeft = bounds.minX <= edgeToleranceX
+  const touchesTop = bounds.minY <= edgeToleranceY
+  const touchesRight = bounds.maxX >= imageWidth - edgeToleranceX
+  const touchesBottom = bounds.maxY >= imageHeight - edgeToleranceY
 
   if (
     !Number.isFinite(areaRatio) ||
     areaRatio < MIN_DOCUMENT_AREA_RATIO ||
-    areaRatio > 1.08
+    areaRatio > MAX_DOCUMENT_AREA_RATIO ||
+    (areaRatio > FULL_FRAME_AREA_RATIO &&
+      touchesLeft &&
+      touchesTop &&
+      touchesRight &&
+      touchesBottom)
   ) {
     return null
   }
@@ -653,6 +678,14 @@ function scoreCorners(
   const widthBalance = Math.min(topWidth, bottomWidth) / Math.max(topWidth, bottomWidth)
   const heightBalance = Math.min(leftHeight, rightHeight) / Math.max(leftHeight, rightHeight)
   const fillRatio = Math.min(contourArea / quadArea, 1)
+  const touchedEdges = [
+    touchesLeft,
+    touchesTop,
+    touchesRight,
+    touchesBottom,
+  ].filter(Boolean).length
+  const areaScore =
+    areaRatio <= 0.72 ? areaRatio : Math.max(0, 0.72 - (areaRatio - 0.72) * 2)
   const center = getCornerCenter(corners)
   const centerDistance = Math.hypot(
     center.x / imageWidth - 0.5,
@@ -660,7 +693,56 @@ function scoreCorners(
   )
   const centerScore = Math.max(0, 1 - centerDistance * 1.6)
 
-  return areaRatio * 3 + widthBalance + heightBalance + fillRatio + centerScore
+  return (
+    areaScore * 3 +
+    widthBalance +
+    heightBalance +
+    fillRatio +
+    centerScore -
+    touchedEdges * 0.18
+  )
+}
+
+export function isFullFrameLikeCorners(
+  corners: CornerPoints,
+  imageWidth: number,
+  imageHeight: number,
+) {
+  const bounds = getCornerBounds(corners)
+  const edgeToleranceX = imageWidth * EDGE_TOUCH_TOLERANCE_RATIO
+  const edgeToleranceY = imageHeight * EDGE_TOUCH_TOLERANCE_RATIO
+  const areaRatio =
+    polygonArea([
+      corners.topLeftCorner,
+      corners.topRightCorner,
+      corners.bottomRightCorner,
+      corners.bottomLeftCorner,
+    ]) /
+    (imageWidth * imageHeight)
+
+  return (
+    areaRatio > FULL_FRAME_AREA_RATIO &&
+    bounds.minX <= edgeToleranceX &&
+    bounds.minY <= edgeToleranceY &&
+    bounds.maxX >= imageWidth - edgeToleranceX &&
+    bounds.maxY >= imageHeight - edgeToleranceY
+  )
+}
+
+function getCornerBounds(corners: CornerPoints) {
+  const points = [
+    corners.topLeftCorner,
+    corners.topRightCorner,
+    corners.bottomRightCorner,
+    corners.bottomLeftCorner,
+  ]
+
+  return {
+    minX: Math.min(...points.map((point) => point.x)),
+    minY: Math.min(...points.map((point) => point.y)),
+    maxX: Math.max(...points.map((point) => point.x)),
+    maxY: Math.max(...points.map((point) => point.y)),
+  }
 }
 
 function polygonArea(points: CornerPoint[]) {
