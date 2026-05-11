@@ -113,6 +113,44 @@ h2 {
   gap: 10px;
 }
 
+.option-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(44, 113, 146, 0.2);
+  border-radius: 8px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.option-toggle input {
+  width: 17px;
+  height: 17px;
+  margin: 2px 0 0;
+  accent-color: var(--accent-green);
+}
+
+.option-toggle span,
+.option-toggle small {
+  display: block;
+}
+
+.option-toggle span {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.option-toggle small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
 button {
   min-height: 40px;
   display: inline-flex;
@@ -161,45 +199,8 @@ button svg {
   background: var(--ink);
 }
 
-.secondary-action,
-.capture-action {
+.secondary-action {
   background: #ffffff;
-}
-
-.camera-box {
-  position: relative;
-  aspect-ratio: 4 / 3;
-  overflow: hidden;
-  border: 1px dashed var(--line-strong);
-  border-radius: 8px;
-  background: #e9f2eb;
-}
-
-.camera-box video {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  opacity: 0;
-}
-
-.camera-box[data-active='true'] video {
-  opacity: 1;
-}
-
-.camera-placeholder {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  gap: 8px;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.camera-placeholder svg {
-  width: 30px;
-  height: 30px;
 }
 
 .metric-grid {

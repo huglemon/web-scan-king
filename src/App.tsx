@@ -3,7 +3,7 @@ import type {
   DragEvent,
   PointerEvent as ReactPointerEvent,
 } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import {
   ArrowDown,
   ArrowUp,
@@ -22,7 +22,6 @@ import {
   Sparkles,
   Trash2,
   Wand2,
-  X,
 } from 'lucide-react'
 import './App.css'
 import {
@@ -94,7 +93,7 @@ function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [busy, setBusy] = useState<BusyState | null>(null)
   const [notice, setNotice] = useState('导入图片后即可开始处理')
-  const [cameraActive, setCameraActive] = useState(false)
+  const [autoCropOnImport, setAutoCropOnImport] = useState(false)
   const [frameEditorPageId, setFrameEditorPageId] = useState<string | null>(
     null,
   )
@@ -102,8 +101,7 @@ function App() {
   const [draggingCorner, setDraggingCorner] = useState<CornerKey | null>(null)
   const [draftStrength, setDraftStrength] = useState<DraftStrengthState>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const streamRef = useRef<MediaStream | null>(null)
+  const cameraInputRef = useRef<HTMLInputElement>(null)
   const frameCanvasRef = useRef<HTMLDivElement>(null)
 
   const selectedPage = useMemo(
@@ -135,11 +133,6 @@ function App() {
     selectedPage?.enhanceStrength ??
     DEFAULT_ENHANCE_STRENGTH
 
-  useEffect(() => {
-    return () => {
-      stopCamera()
-    }
-  }, [])
   async function addImagePage(dataUrl: string, name: string, sourceSize = 0) {
     const image = await loadImage(dataUrl)
     const originalWidth = image.naturalWidth || image.width
@@ -165,6 +158,7 @@ function App() {
     setPages((current) => [...current, page])
     setSelectedId(page.id)
     setNotice(`已添加 ${name}`)
+    return page
   }
 
   async function handleFiles(event: ChangeEvent<HTMLInputElement>) {
@@ -172,7 +166,12 @@ function App() {
     event.target.value = ''
   }
 
-  async function importFiles(inputFiles: File[]) {
+  async function handleCameraFiles(event: ChangeEvent<HTMLInputElement>) {
+    await importFiles(Array.from(event.target.files ?? []), '拍摄页')
+    event.target.value = ''
+  }
+
+  async function importFiles(inputFiles: File[], fallbackName = '扫描页') {
     const files = inputFiles.filter((file) => file.type.startsWith('image/'))
 
     if (files.length === 0) {
@@ -183,14 +182,32 @@ function App() {
     setBusy({ label: `正在导入 ${files.length} 张图片` })
 
     try {
+      const importedPages: ScanPage[] = []
+
       for (const [index, file] of files.entries()) {
         const dataUrl = await readFileAsDataUrl(file)
-        await addImagePage(
+        const page = await addImagePage(
           dataUrl,
-          createPageName(pages.length + index, file.name),
+          createPageName(pages.length + index, file.name || fallbackName),
           file.size,
         )
+        importedPages.push(page)
       }
+
+      if (autoCropOnImport) {
+        const result = await autoCropPages(importedPages)
+
+        if (result.failed > 0) {
+          setNotice(
+            `已导入 ${files.length} 张，其中 ${result.completed} 张完成自动裁切`,
+          )
+          return
+        }
+
+        setNotice(`导入并自动裁切完成：${files.length} 张图片`)
+        return
+      }
+
       setNotice(`导入完成：${files.length} 张图片`)
     } catch (error) {
       setNotice(getErrorMessage(error))
@@ -307,41 +324,64 @@ function App() {
       return
     }
 
-    setFrameEditorPageId(null)
-    setDraftCorners(null)
     setBusy({ pageId: selectedPage.id, label: '正在识别纸张边缘' })
 
     try {
-      if (!isOpenCvReady()) {
-        setNotice('正在准备自动裁切，首次可能需要几秒')
-        await loadOpenCv()
-      }
-
-      const extracted = await autoExtractDocument(selectedPage.originalDataUrl)
-      await applyVariant(
-        {
-          ...selectedPage,
-          baseDataUrl: extracted.dataUrl,
-          rotation: 0,
-        },
-        {
-          baseDataUrl: extracted.dataUrl,
-          rotation: 0,
-        },
-      )
-      setPages((current) =>
-        current.map((page) =>
-          page.id === selectedPage.id
-            ? { ...page, scanned: true, cropCorners: extracted.cropCorners }
-            : page,
-        ),
-      )
+      await autoCropPage(selectedPage)
       setNotice('已自动裁切并记录边框，可进入手动边框继续微调')
     } catch (error) {
       setNotice(`${getErrorMessage(error)}，已保留原图处理`)
     } finally {
       setBusy(null)
     }
+  }
+
+  async function autoCropPages(importedPages: ScanPage[]) {
+    let completed = 0
+    let failed = 0
+
+    for (const page of importedPages) {
+      setBusy({ pageId: page.id, label: `正在自动裁切：${page.name}` })
+
+      try {
+        await autoCropPage(page)
+        completed += 1
+      } catch {
+        failed += 1
+      }
+    }
+
+    return { completed, failed }
+  }
+
+  async function autoCropPage(page: ScanPage) {
+    setFrameEditorPageId(null)
+    setDraftCorners(null)
+
+    if (!isOpenCvReady()) {
+      setNotice('正在准备自动裁切，首次可能需要几秒')
+      await loadOpenCv()
+    }
+
+    const extracted = await autoExtractDocument(page.originalDataUrl)
+    await applyVariant(
+      {
+        ...page,
+        baseDataUrl: extracted.dataUrl,
+        rotation: 0,
+      },
+      {
+        baseDataUrl: extracted.dataUrl,
+        rotation: 0,
+      },
+    )
+    setPages((current) =>
+      current.map((item) =>
+        item.id === page.id
+          ? { ...item, scanned: true, cropCorners: extracted.cropCorners }
+          : item,
+      ),
+    )
   }
 
   function openFrameEditor() {
@@ -453,74 +493,6 @@ function App() {
         ),
       )
       setNotice('已还原到原始图片')
-    } catch (error) {
-      setNotice(getErrorMessage(error))
-    } finally {
-      setBusy(null)
-    }
-  }
-
-  async function startCamera() {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setNotice('当前浏览器不支持摄像头调用')
-      return
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-        },
-      })
-      streamRef.current = stream
-      setCameraActive(true)
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream
-        await videoRef.current.play()
-      }
-
-      setNotice('摄像头已开启，调整画面后点击拍摄')
-    } catch (error) {
-      setNotice(getErrorMessage(error))
-    }
-  }
-
-  function stopCamera() {
-    streamRef.current?.getTracks().forEach((track) => track.stop())
-    streamRef.current = null
-    setCameraActive(false)
-  }
-
-  async function captureFrame() {
-    const video = videoRef.current
-
-    if (!video || video.videoWidth === 0 || video.videoHeight === 0) {
-      setNotice('摄像头画面还没有准备好')
-      return
-    }
-
-    const canvas = document.createElement('canvas')
-    const context = canvas.getContext('2d')
-
-    if (!context) {
-      setNotice('当前浏览器不支持 Canvas 截图')
-      return
-    }
-
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-    context.drawImage(video, 0, 0, canvas.width, canvas.height)
-    setBusy({ label: '正在保存拍摄页' })
-
-    try {
-      await addImagePage(
-        canvas.toDataURL('image/jpeg', 0.92),
-        `拍摄页 ${pages.length + 1}`,
-      )
     } catch (error) {
       setNotice(getErrorMessage(error))
     } finally {
@@ -651,6 +623,14 @@ function App() {
         multiple
         onChange={handleFiles}
       />
+      <input
+        ref={cameraInputRef}
+        className="sr-only"
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleCameraFiles}
+      />
 
       <aside className="side-panel left-panel" aria-label="导入和导出">
         <div className="brand-block">
@@ -676,33 +656,26 @@ function App() {
           <button
             className="secondary-action"
             type="button"
-            onClick={cameraActive ? stopCamera : startCamera}
+            onClick={() => cameraInputRef.current?.click()}
             disabled={Boolean(busy)}
           >
-            {cameraActive ? <X aria-hidden="true" /> : <Camera aria-hidden="true" />}
-            {cameraActive ? '关闭相机' : '打开相机'}
+            <Camera aria-hidden="true" />
+            拍摄导入
           </button>
         </div>
 
-        <div className="camera-box" data-active={cameraActive}>
-          <video ref={videoRef} playsInline muted />
-          {!cameraActive && (
-            <div className="camera-placeholder">
-              <Camera aria-hidden="true" />
-              <span>相机预览</span>
-            </div>
-          )}
-        </div>
-
-        <button
-          className="capture-action"
-          type="button"
-          onClick={captureFrame}
-          disabled={!cameraActive || Boolean(busy)}
-        >
-          <FileImage aria-hidden="true" />
-          拍摄当前画面
-        </button>
+        <label className="option-toggle">
+          <input
+            type="checkbox"
+            checked={autoCropOnImport}
+            onChange={(event) => setAutoCropOnImport(event.currentTarget.checked)}
+            disabled={Boolean(busy)}
+          />
+          <span>
+            导入后自动裁切
+            <small>适用于上传、拖入和拍摄导入</small>
+          </span>
+        </label>
 
         <div className="metric-grid">
           <div>
