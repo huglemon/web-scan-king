@@ -847,11 +847,13 @@ function App() {
             </div>
           ) : selectedPage ? (
             <>
-              <img
-                className="desktop-preview-image"
-                src={selectedPage.outputDataUrl}
-                alt={selectedPage.name}
-              />
+              <div className="preview-image-frame desktop-preview-frame">
+                <img
+                  className="desktop-preview-image"
+                  src={selectedPage.outputDataUrl}
+                  alt={selectedPage.name}
+                />
+              </div>
               {pages.map((page, index) => (
                 <section
                   className="mobile-page-slide"
@@ -859,7 +861,7 @@ function App() {
                   key={page.id}
                   aria-label={`第 ${index + 1} 页`}
                 >
-                  <div className="mobile-page-image-frame">
+                  <div className="preview-image-frame mobile-page-image-frame">
                     <img src={page.outputDataUrl} alt={page.name} />
                   </div>
                 </section>

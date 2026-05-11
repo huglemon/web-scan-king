@@ -335,14 +335,26 @@ button svg {
   content: none;
 }
 
-.preview-stage > img {
+.preview-image-frame {
   position: relative;
   z-index: 1;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.preview-image-frame img {
   display: block;
   width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
+  max-width: 100%;
+  max-height: 100%;
   object-fit: contain;
   filter: drop-shadow(0 18px 38px rgba(34, 53, 44, 0.14));
 }
@@ -939,7 +951,7 @@ button svg {
     overflow: hidden;
   }
 
-  .preview-stage > .desktop-preview-image {
+  .desktop-preview-frame {
     display: none;
   }
 
@@ -959,28 +971,11 @@ button svg {
     scroll-snap-stop: always;
   }
 
-  .mobile-page-image-frame {
-    width: 100%;
-    height: 100%;
-    min-width: 0;
-    min-height: 0;
-    max-width: 100%;
-    max-height: 100%;
-    display: grid;
-    place-items: center;
-    overflow: hidden;
-  }
-
   .mobile-page-image-frame img {
-    display: block;
-    width: 100%;
-    height: 100%;
-    min-width: 0;
-    min-height: 0;
-    object-fit: contain;
     border-radius: 6px;
     background: #ffffff;
     box-shadow: 0 18px 36px rgba(32, 53, 44, 0.17);
+    filter: none;
   }
 
   .mobile-import-slide {
