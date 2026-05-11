@@ -19,7 +19,6 @@ import {
   RotateCcw,
   RotateCw,
   ScanLine,
-  ShieldCheck,
   Sparkles,
   Trash2,
   Wand2,
@@ -96,9 +95,6 @@ function App() {
   const [busy, setBusy] = useState<BusyState | null>(null)
   const [notice, setNotice] = useState('导入图片后即可开始处理')
   const [cameraActive, setCameraActive] = useState(false)
-  const [openCvState, setOpenCvState] = useState(
-    isOpenCvReady() ? 'ready' : 'idle',
-  )
   const [frameEditorPageId, setFrameEditorPageId] = useState<string | null>(
     null,
   )
@@ -317,12 +313,10 @@ function App() {
 
     try {
       if (!isOpenCvReady()) {
-        setOpenCvState('loading')
-        setNotice('正在加载 OpenCV.js，首次可能需要几秒')
+        setNotice('正在准备自动裁切，首次可能需要几秒')
         await loadOpenCv()
       }
 
-      setOpenCvState('ready')
       const extracted = await autoExtractDocument(selectedPage.originalDataUrl)
       await applyVariant(
         {
@@ -345,7 +339,6 @@ function App() {
       setNotice('已自动裁切并记录边框，可进入手动边框继续微调')
     } catch (error) {
       setNotice(`${getErrorMessage(error)}，已保留原图处理`)
-      setOpenCvState(isOpenCvReady() ? 'ready' : 'idle')
     } finally {
       setBusy(null)
     }
@@ -373,12 +366,10 @@ function App() {
 
     try {
       if (!isOpenCvReady()) {
-        setOpenCvState('loading')
-        setNotice('正在加载 OpenCV.js，首次可能需要几秒')
+        setNotice('正在准备边框矫正，首次可能需要几秒')
         await loadOpenCv()
       }
 
-      setOpenCvState('ready')
       const extracted = await manualExtractDocument(
         selectedPage.originalDataUrl,
         savedCorners,
@@ -406,7 +397,6 @@ function App() {
       setNotice('已按手动边框完成透视矫正')
     } catch (error) {
       setNotice(`${getErrorMessage(error)}，请微调边框后重试`)
-      setOpenCvState(isOpenCvReady() ? 'ready' : 'idle')
     } finally {
       setBusy(null)
     }
@@ -668,8 +658,8 @@ function App() {
             <ScanLine aria-hidden="true" />
           </div>
           <div>
-            <p className="eyebrow">Web Scan King</p>
-            <h1>本地文档扫描台</h1>
+            <p className="eyebrow">inWind Docs Scan</p>
+            <h1>乘风文档扫描</h1>
           </div>
         </div>
 
@@ -746,10 +736,6 @@ function App() {
           </button>
         </div>
 
-        <div className="privacy-note">
-          <ShieldCheck aria-hidden="true" />
-          <p>图片处理在浏览器本地完成。自动裁切首次会加载 OpenCV.js。</p>
-        </div>
       </aside>
 
       <section className="workspace" aria-label="扫描工作区">
@@ -859,7 +845,7 @@ function App() {
               type="button"
               onClick={() => void handleAutoScan()}
               disabled={!selectedPage || Boolean(busy)}
-              title="使用 jscanify / OpenCV.js 自动识别纸张"
+              title="自动识别纸张边缘"
             >
               <Wand2 aria-hidden="true" />
               自动裁切
@@ -959,17 +945,9 @@ function App() {
 
         <footer className="workspace-footer">
           <span>
-            OpenCV:{' '}
-            {openCvState === 'ready'
-              ? '已就绪'
-              : openCvState === 'loading'
-                ? '加载中'
-                : '按需加载'}
-          </span>
-          <span>
             {selectedPage ? `${selectedPage.width} x ${selectedPage.height}` : '无页面'}
           </span>
-          <span>{selectedPage?.scanned ? '已透视矫正' : '原图/滤镜模式'}</span>
+          <span>{selectedPage?.scanned ? '已透视矫正' : '待裁切'}</span>
         </footer>
       </section>
 

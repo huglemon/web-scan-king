@@ -38,7 +38,6 @@
 .workspace-header,
 .tool-band,
 .workspace-footer,
-.privacy-note,
 .status-pill,
 .metric-grid,
 .export-stack,
@@ -72,7 +71,6 @@
 
 .brand-mark svg,
 .panel-heading svg,
-.privacy-note svg,
 .status-pill svg {
   width: 20px;
   height: 20px;
@@ -228,7 +226,6 @@ button svg {
 }
 
 .metric-grid p,
-.privacy-note p,
 .workspace-footer,
 .page-meta span,
 .empty-sheet p {
@@ -241,20 +238,6 @@ button svg {
   justify-content: flex-start;
   padding-inline: 13px;
   background: #ffffff;
-}
-
-.privacy-note {
-  margin-top: auto;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 13px;
-  border: 1px solid rgba(42, 122, 102, 0.24);
-  border-radius: 8px;
-  background: #eef7ee;
-}
-
-.privacy-note svg {
-  color: var(--accent-green);
 }
 
 .workspace {

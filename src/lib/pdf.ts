@@ -52,8 +52,8 @@ export async function exportPagesToPdf(
   const pdf = new jsPDF('p', 'mm', 'a4')
   pdf.setProperties({
     title: fileName.replace(/\.pdf$/i, ''),
-    subject: 'Web Scan King document export',
-    creator: 'Web Scan King',
+    subject: 'inWind Docs Scan document export',
+    creator: 'inWind Docs Scan',
   })
 
   for (const [index, page] of pages.entries()) {

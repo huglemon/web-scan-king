@@ -142,7 +142,7 @@ export async function loadOpenCv(timeoutMs = 25000) {
 
   const openCvPromise = new Promise<void>((resolve, reject) => {
     const timeout = window.setTimeout(() => {
-      reject(new Error('OpenCV.js 加载超时，请检查网络后重试'))
+      reject(new Error('自动裁切准备超时，请检查网络后重试'))
     }, timeoutMs)
 
     const finish = () => {
@@ -182,7 +182,7 @@ export async function loadOpenCv(timeoutMs = 25000) {
     script.onload = waitForRuntime
     script.onerror = () => {
       window.clearTimeout(timeout)
-      reject(new Error('OpenCV.js 加载失败'))
+      reject(new Error('自动裁切准备失败'))
     }
 
     document.body.appendChild(script)
@@ -312,7 +312,7 @@ function detectDocumentCorners(
 
 function getOpenCvRuntime() {
   if (!isOpenCvReady()) {
-    throw new Error('OpenCV.js 尚未就绪')
+    throw new Error('自动裁切尚未准备好')
   }
 
   return window.cv as unknown as OpenCvRuntime
