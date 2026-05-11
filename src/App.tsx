@@ -25,6 +25,7 @@ import {
   Wand2,
 } from 'lucide-react'
 import './App.css'
+import { mapClientPointToImagePoint } from './lib/frame'
 import {
   DEFAULT_ENHANCE_STRENGTH,
   FILTER_PRESETS,
@@ -119,7 +120,7 @@ function App() {
   const [draftStrength, setDraftStrength] = useState<DraftStrengthState>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
-  const frameCanvasRef = useRef<HTMLDivElement>(null)
+  const frameImageRef = useRef<HTMLDivElement>(null)
   const mobilePreviewRef = useRef<HTMLDivElement>(null)
 
   const selectedPage = useMemo(
@@ -605,20 +606,17 @@ function App() {
   }
 
   function updateDraftCorner(corner: CornerKey, clientX: number, clientY: number) {
-    const rect = frameCanvasRef.current?.getBoundingClientRect()
+    const rect = frameImageRef.current?.getBoundingClientRect()
 
     if (!rect || !selectedPage || rect.width === 0 || rect.height === 0) {
       return
     }
 
-    const x = clamp(
-      ((clientX - rect.left) / rect.width) * selectedPage.originalWidth,
-      0,
+    const point = mapClientPointToImagePoint(
+      clientX,
+      clientY,
+      rect,
       selectedPage.originalWidth,
-    )
-    const y = clamp(
-      ((clientY - rect.top) / rect.height) * selectedPage.originalHeight,
-      0,
       selectedPage.originalHeight,
     )
 
@@ -626,7 +624,7 @@ function App() {
       current
         ? {
             ...current,
-            [corner]: { x, y },
+            [corner]: point,
           }
         : current,
     )
@@ -849,38 +847,42 @@ function App() {
           {isFrameEditing && selectedPage && draftCorners ? (
             <div className="frame-editor">
               <div
-                ref={frameCanvasRef}
                 className="frame-editor-canvas"
-                onPointerMove={handleCornerMove}
-                onPointerUp={() => setDraggingCorner(null)}
-                onPointerCancel={() => setDraggingCorner(null)}
               >
-                <img src={selectedPage.originalDataUrl} alt={selectedPage.name} />
-                <div className="frame-overlay">
-                  <svg
-                    className="frame-polygon"
-                    viewBox="0 0 100 100"
-                    preserveAspectRatio="none"
-                    aria-hidden="true"
-                  >
-                    <polygon points={toSvgPoints(draftCorners, selectedPage)} />
-                  </svg>
-                  {CORNERS.map((corner) => (
-                    <button
-                      key={corner.key}
-                      className="corner-handle"
-                      type="button"
-                      style={getCornerStyle(draftCorners[corner.key], selectedPage)}
-                      onPointerDown={(event) => startCornerDrag(event, corner.key)}
-                      onPointerMove={handleCornerMove}
-                      onPointerUp={() => setDraggingCorner(null)}
-                      onPointerCancel={() => setDraggingCorner(null)}
-                      aria-label={`拖动${corner.label}`}
-                      title={`拖动${corner.label}`}
+                <div
+                  ref={frameImageRef}
+                  className="frame-editor-image"
+                  onPointerMove={handleCornerMove}
+                  onPointerUp={() => setDraggingCorner(null)}
+                  onPointerCancel={() => setDraggingCorner(null)}
+                >
+                  <img src={selectedPage.originalDataUrl} alt={selectedPage.name} />
+                  <div className="frame-overlay">
+                    <svg
+                      className="frame-polygon"
+                      viewBox="0 0 100 100"
+                      preserveAspectRatio="none"
+                      aria-hidden="true"
                     >
-                      <span />
-                    </button>
-                  ))}
+                      <polygon points={toSvgPoints(draftCorners, selectedPage)} />
+                    </svg>
+                    {CORNERS.map((corner) => (
+                      <button
+                        key={corner.key}
+                        className="corner-handle"
+                        type="button"
+                        style={getCornerStyle(draftCorners[corner.key], selectedPage)}
+                        onPointerDown={(event) => startCornerDrag(event, corner.key)}
+                        onPointerMove={handleCornerMove}
+                        onPointerUp={() => setDraggingCorner(null)}
+                        onPointerCancel={() => setDraggingCorner(null)}
+                        aria-label={`拖动${corner.label}`}
+                        title={`拖动${corner.label}`}
+                      >
+                        <span />
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
               <div className="frame-editor-actions">
@@ -1501,10 +1503,6 @@ function getCornerStyle(point: CornerPoint, page: ScanPage) {
     left: `${(point.x / page.originalWidth) * 100}%`,
     top: `${(point.y / page.originalHeight) * 100}%`,
   }
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max)
 }
 
 function createId() {

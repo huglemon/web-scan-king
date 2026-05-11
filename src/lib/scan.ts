@@ -45,6 +45,8 @@ type ManagedMat = {
   cols: number
   rows: number
   data32S: Int32Array
+  data?: Uint8Array
+  copyTo: (dst: ManagedMat) => void
   delete: () => void
 }
 
@@ -68,6 +70,7 @@ type OpenCvRuntime = {
     interpolation: number,
   ) => void
   cvtColor: (src: ManagedMat, dst: ManagedMat, code: number) => void
+  absdiff: (src1: ManagedMat, src2: ManagedMat, dst: ManagedMat) => void
   GaussianBlur: (
     src: ManagedMat,
     dst: ManagedMat,
@@ -99,6 +102,12 @@ type OpenCvRuntime = {
     c: number,
   ) => void
   dilate: (src: ManagedMat, dst: ManagedMat, kernel: ManagedMat) => void
+  morphologyEx: (
+    src: ManagedMat,
+    dst: ManagedMat,
+    op: number,
+    kernel: ManagedMat,
+  ) => void
   findContours: (
     image: ManagedMat,
     contours: ManagedMatVector,
@@ -118,6 +127,7 @@ type OpenCvRuntime = {
   COLOR_RGBA2GRAY: number
   BORDER_DEFAULT: number
   INTER_AREA: number
+  MORPH_CLOSE: number
   RETR_EXTERNAL: number
   CHAIN_APPROX_SIMPLE: number
   THRESH_BINARY: number
@@ -289,6 +299,7 @@ function detectDocumentCorners(
 
       collectCannyCandidates(cv, scanner, blurred, working, candidates)
       collectThresholdCandidates(cv, scanner, gray, blurred, working, candidates)
+      collectLowContrastCandidates(cv, scanner, gray, working, candidates)
       collectJscanifyCandidate(cv, scanner, working, candidates)
     } finally {
       gray.delete()
@@ -363,6 +374,8 @@ function collectCannyCandidates(
   candidates: DetectionCandidate[],
 ) {
   const thresholds: Array<[number, number]> = [
+    [12, 45],
+    [20, 75],
     [30, 110],
     [50, 160],
     [80, 220],
@@ -422,6 +435,87 @@ function collectThresholdCandidates(
   } finally {
     adaptive.delete()
   }
+
+  const adaptiveInverse = new cv.Mat()
+
+  try {
+    cv.adaptiveThreshold(
+      gray,
+      adaptiveInverse,
+      255,
+      cv.ADAPTIVE_THRESH_GAUSSIAN_C,
+      cv.THRESH_BINARY_INV,
+      41,
+      5,
+    )
+    collectContourCandidates(cv, scanner, adaptiveInverse, working, candidates)
+  } finally {
+    adaptiveInverse.delete()
+  }
+}
+
+function collectLowContrastCandidates(
+  cv: OpenCvRuntime,
+  scanner: JScanify,
+  gray: ManagedMat,
+  working: ReturnType<typeof createWorkingMat>,
+  candidates: DetectionCandidate[],
+) {
+  const background = estimateEdgeBackground(gray)
+  const diff = new cv.Mat()
+  const threshold = new cv.Mat()
+  const closed = new cv.Mat()
+  const backgroundMat = createFilledGrayMat(cv, gray, background)
+  const kernel = new cv.Mat()
+
+  try {
+    cv.absdiff(gray, backgroundMat, diff)
+
+    for (const value of [6, 10, 14, 20]) {
+      cv.threshold(diff, threshold, value, 255, cv.THRESH_BINARY)
+      cv.morphologyEx(threshold, closed, cv.MORPH_CLOSE, kernel)
+      collectContourCandidates(cv, scanner, closed, working, candidates)
+    }
+  } finally {
+    diff.delete()
+    threshold.delete()
+    closed.delete()
+    backgroundMat.delete()
+    kernel.delete()
+  }
+}
+
+function createFilledGrayMat(cv: OpenCvRuntime, gray: ManagedMat, value: number) {
+  const mat = new cv.Mat()
+
+  gray.copyTo(mat)
+  cv.threshold(mat, mat, 0, value, cv.THRESH_BINARY)
+
+  return mat
+}
+
+function estimateEdgeBackground(gray: ManagedMat) {
+  const data = gray.data
+
+  if (!data || gray.cols <= 0 || gray.rows <= 0) {
+    return 255
+  }
+
+  const insetX = Math.max(1, Math.round(gray.cols * 0.035))
+  const insetY = Math.max(1, Math.round(gray.rows * 0.035))
+  const samples: number[] = []
+
+  for (let x = 0; x < gray.cols; x += insetX) {
+    samples.push(data[x], data[(gray.rows - 1) * gray.cols + x])
+  }
+
+  for (let y = 0; y < gray.rows; y += insetY) {
+    samples.push(data[y * gray.cols], data[y * gray.cols + gray.cols - 1])
+  }
+
+  samples.sort((first, second) => first - second)
+
+  return samples[Math.floor(samples.length / 2)] ?? 255
 }
 
 function collectJscanifyCandidate(
