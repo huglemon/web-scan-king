@@ -28,6 +28,8 @@ const MIN_DOCUMENT_AREA_RATIO = 0.045
 const MAX_DOCUMENT_AREA_RATIO = 0.92
 const FULL_FRAME_AREA_RATIO = 0.86
 const EDGE_TOUCH_TOLERANCE_RATIO = 0.012
+const LINE_SCAN_MARGIN_RATIO = 0.055
+const LINE_SCAN_MIN_EDGE_RATIO = 0.045
 
 export type ExtractDocumentResult = {
   dataUrl: string
@@ -279,7 +281,8 @@ function detectDocumentCorners(
 ): CornerPoints {
   const cv = getOpenCvRuntime()
   const src = cv.imread(image)
-  const candidates: DetectionCandidate[] = []
+  const primaryCandidates: DetectionCandidate[] = []
+  const fallbackCandidates: DetectionCandidate[] = []
   const working = createWorkingMat(cv, src)
 
   try {
@@ -297,10 +300,21 @@ function detectDocumentCorners(
         cv.BORDER_DEFAULT,
       )
 
-      collectCannyCandidates(cv, scanner, blurred, working, candidates)
-      collectThresholdCandidates(cv, scanner, gray, blurred, working, candidates)
-      collectLowContrastCandidates(cv, scanner, gray, working, candidates)
-      collectJscanifyCandidate(cv, scanner, working, candidates)
+      collectCannyCandidates(cv, scanner, blurred, working, primaryCandidates)
+      collectThresholdCandidates(
+        cv,
+        scanner,
+        gray,
+        blurred,
+        working,
+        primaryCandidates,
+      )
+      collectJscanifyCandidate(cv, scanner, working, primaryCandidates)
+
+      if (primaryCandidates.length === 0) {
+        collectLowContrastCandidates(cv, scanner, gray, working, fallbackCandidates)
+        collectLineScanCandidate(gray, working, fallbackCandidates)
+      }
     } finally {
       gray.delete()
       blurred.delete()
@@ -312,7 +326,8 @@ function detectDocumentCorners(
     src.delete()
   }
 
-  const best = candidates.sort((first, second) => second.score - first.score)[0]
+  const best =
+    getBestCandidate(primaryCandidates) ?? getBestCandidate(fallbackCandidates)
 
   if (!best) {
     throw new Error('没有识别到完整的文档四角')
@@ -327,6 +342,12 @@ function getOpenCvRuntime() {
   }
 
   return window.cv as unknown as OpenCvRuntime
+}
+
+function getBestCandidate(candidates: DetectionCandidate[]) {
+  return [...candidates].sort(
+    (first, second) => second.score - first.score,
+  )[0]
 }
 
 function createWorkingMat(cv: OpenCvRuntime, src: ManagedMat) {
@@ -435,23 +456,6 @@ function collectThresholdCandidates(
   } finally {
     adaptive.delete()
   }
-
-  const adaptiveInverse = new cv.Mat()
-
-  try {
-    cv.adaptiveThreshold(
-      gray,
-      adaptiveInverse,
-      255,
-      cv.ADAPTIVE_THRESH_GAUSSIAN_C,
-      cv.THRESH_BINARY_INV,
-      41,
-      5,
-    )
-    collectContourCandidates(cv, scanner, adaptiveInverse, working, candidates)
-  } finally {
-    adaptiveInverse.delete()
-  }
 }
 
 function collectLowContrastCandidates(
@@ -516,6 +520,201 @@ function estimateEdgeBackground(gray: ManagedMat) {
   samples.sort((first, second) => first - second)
 
   return samples[Math.floor(samples.length / 2)] ?? 255
+}
+
+function collectLineScanCandidate(
+  gray: ManagedMat,
+  working: ReturnType<typeof createWorkingMat>,
+  candidates: DetectionCandidate[],
+) {
+  const corners = estimateDocumentCornersByLineScan(gray)
+
+  if (!corners) {
+    return
+  }
+
+  addCandidate(corners, polygonArea(cornersToArray(corners)), working, candidates)
+}
+
+export function estimateDocumentCornersByLineScan(
+  gray: Pick<ManagedMat, 'cols' | 'rows' | 'data'>,
+): CornerPoints | null {
+  const data = gray.data
+
+  if (!data || gray.cols < 48 || gray.rows < 48) {
+    return null
+  }
+
+  const marginX = Math.max(2, Math.round(gray.cols * LINE_SCAN_MARGIN_RATIO))
+  const marginY = Math.max(2, Math.round(gray.rows * LINE_SCAN_MARGIN_RATIO))
+  const verticalProfile = buildVerticalGradientProfile(
+    data,
+    gray.cols,
+    gray.rows,
+    marginY,
+  )
+  const horizontalProfile = buildHorizontalGradientProfile(
+    data,
+    gray.cols,
+    gray.rows,
+    marginX,
+  )
+  const left = findStrongestEdge(
+    verticalProfile,
+    marginX,
+    Math.max(marginX + 1, Math.round(gray.cols * 0.46)),
+  )
+  const right = findStrongestEdge(
+    verticalProfile,
+    Math.min(gray.cols - marginX - 2, Math.round(gray.cols * 0.54)),
+    gray.cols - marginX - 1,
+  )
+  const top = findStrongestEdge(
+    horizontalProfile,
+    marginY,
+    Math.max(marginY + 1, Math.round(gray.rows * 0.46)),
+  )
+  const bottom = findStrongestEdge(
+    horizontalProfile,
+    Math.min(gray.rows - marginY - 2, Math.round(gray.rows * 0.54)),
+    gray.rows - marginY - 1,
+  )
+
+  if (!left || !right || !top || !bottom) {
+    return null
+  }
+
+  const minWidth = gray.cols * LINE_SCAN_MIN_EDGE_RATIO
+  const minHeight = gray.rows * LINE_SCAN_MIN_EDGE_RATIO
+
+  if (
+    right.index - left.index < minWidth ||
+    bottom.index - top.index < minHeight
+  ) {
+    return null
+  }
+
+  const imageArea = gray.cols * gray.rows
+  const areaRatio =
+    ((right.index - left.index) * (bottom.index - top.index)) / imageArea
+
+  if (areaRatio < MIN_DOCUMENT_AREA_RATIO || areaRatio > FULL_FRAME_AREA_RATIO) {
+    return null
+  }
+
+  const confidence = Math.min(left.score, right.score, top.score, bottom.score)
+
+  if (confidence < 1.8) {
+    return null
+  }
+
+  return {
+    topLeftCorner: { x: left.index, y: top.index },
+    topRightCorner: { x: right.index, y: top.index },
+    bottomLeftCorner: { x: left.index, y: bottom.index },
+    bottomRightCorner: { x: right.index, y: bottom.index },
+  }
+}
+
+function buildVerticalGradientProfile(
+  data: Uint8Array,
+  width: number,
+  height: number,
+  marginY: number,
+) {
+  const profile = new Array<number>(width).fill(0)
+  const top = marginY
+  const bottom = height - marginY
+
+  for (let x = 1; x < width - 1; x += 1) {
+    let sum = 0
+
+    for (let y = top; y < bottom; y += 1) {
+      sum += Math.abs(data[y * width + x] - data[y * width + x - 1])
+    }
+
+    profile[x] = sum / Math.max(1, bottom - top)
+  }
+
+  return smoothProfile(profile)
+}
+
+function buildHorizontalGradientProfile(
+  data: Uint8Array,
+  width: number,
+  height: number,
+  marginX: number,
+) {
+  const profile = new Array<number>(height).fill(0)
+  const left = marginX
+  const right = width - marginX
+
+  for (let y = 1; y < height - 1; y += 1) {
+    let sum = 0
+
+    for (let x = left; x < right; x += 1) {
+      sum += Math.abs(data[y * width + x] - data[(y - 1) * width + x])
+    }
+
+    profile[y] = sum / Math.max(1, right - left)
+  }
+
+  return smoothProfile(profile)
+}
+
+function smoothProfile(profile: number[]) {
+  const smoothed = [...profile]
+
+  for (let index = 2; index < profile.length - 2; index += 1) {
+    smoothed[index] =
+      (profile[index - 2] +
+        profile[index - 1] * 2 +
+        profile[index] * 3 +
+        profile[index + 1] * 2 +
+        profile[index + 2]) /
+      9
+  }
+
+  return smoothed
+}
+
+function findStrongestEdge(
+  profile: number[],
+  start: number,
+  end: number,
+) {
+  const safeStart = Math.max(1, Math.min(profile.length - 2, start))
+  const safeEnd = Math.max(safeStart + 1, Math.min(profile.length - 2, end))
+  const baseline = median(profile.slice(safeStart, safeEnd + 1))
+  let bestIndex = -1
+  let bestValue = -Infinity
+
+  for (let index = safeStart; index <= safeEnd; index += 1) {
+    const value = profile[index]
+
+    if (value > bestValue) {
+      bestValue = value
+      bestIndex = index
+    }
+  }
+
+  if (bestIndex < 0) {
+    return null
+  }
+
+  return {
+    index: bestIndex,
+    score: bestValue - baseline,
+  }
+}
+
+function median(values: number[]) {
+  if (values.length === 0) {
+    return 0
+  }
+
+  const sorted = [...values].sort((first, second) => first - second)
+  return sorted[Math.floor(sorted.length / 2)] ?? 0
 }
 
 function collectJscanifyCandidate(
@@ -849,6 +1048,15 @@ function polygonArea(points: CornerPoint[]) {
   }
 
   return Math.abs(area / 2)
+}
+
+function cornersToArray(corners: CornerPoints) {
+  return [
+    corners.topLeftCorner,
+    corners.topRightCorner,
+    corners.bottomRightCorner,
+    corners.bottomLeftCorner,
+  ]
 }
 
 function getCornerCenter(corners: CornerPoints) {

@@ -25,7 +25,13 @@ import {
   Wand2,
 } from 'lucide-react'
 import './App.css'
-import { mapClientPointToImagePoint } from './lib/frame'
+import {
+  calculateContainedFrameSize,
+  type FrameSize,
+  type FrameEdgeKey,
+  mapClientPointToImagePoint,
+  moveFrameEdge,
+} from './lib/frame'
 import {
   DEFAULT_ENHANCE_STRENGTH,
   FILTER_PRESETS,
@@ -84,6 +90,14 @@ type DraftStrengthState = {
 } | null
 
 type MobileToolTab = 'quick' | 'filters' | 'pages' | 'export'
+type FrameDragState =
+  | { type: 'corner'; corner: CornerKey }
+  | {
+      type: 'edge'
+      edge: FrameEdgeKey
+      startPoint: CornerPoint
+      startCorners: CornerPoints
+    }
 
 const DEFAULT_FILTER: ScanFilterId = 'clean'
 const MOBILE_FILTER_IDS = new Set<ScanFilterId>([
@@ -103,6 +117,27 @@ const CORNERS: Array<{ key: CornerKey; label: string }> = [
   { key: 'bottomRightCorner', label: '右下角' },
   { key: 'bottomLeftCorner', label: '左下角' },
 ]
+const FRAME_EDGES: Array<{
+  key: FrameEdgeKey
+  label: string
+  from: CornerKey
+  to: CornerKey
+}> = [
+  { key: 'topEdge', label: '上边', from: 'topLeftCorner', to: 'topRightCorner' },
+  {
+    key: 'rightEdge',
+    label: '右边',
+    from: 'topRightCorner',
+    to: 'bottomRightCorner',
+  },
+  {
+    key: 'bottomEdge',
+    label: '下边',
+    from: 'bottomLeftCorner',
+    to: 'bottomRightCorner',
+  },
+  { key: 'leftEdge', label: '左边', from: 'topLeftCorner', to: 'bottomLeftCorner' },
+]
 
 function App() {
   const [pages, setPages] = useState<ScanPage[]>([])
@@ -116,10 +151,12 @@ function App() {
     null,
   )
   const [draftCorners, setDraftCorners] = useState<CornerPoints | null>(null)
-  const [draggingCorner, setDraggingCorner] = useState<CornerKey | null>(null)
+  const [frameDrag, setFrameDrag] = useState<FrameDragState | null>(null)
+  const [frameImageSize, setFrameImageSize] = useState<FrameSize | null>(null)
   const [draftStrength, setDraftStrength] = useState<DraftStrengthState>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
+  const frameCanvasRef = useRef<HTMLDivElement>(null)
   const frameImageRef = useRef<HTMLDivElement>(null)
   const mobilePreviewRef = useRef<HTMLDivElement>(null)
 
@@ -170,6 +207,53 @@ function App() {
     })
     setMobilePreviewIndex(selectedIndex)
   }, [selectedIndex, pages.length, isFrameEditing])
+
+  useEffect(() => {
+    if (!isFrameEditing || !selectedPage) {
+      return
+    }
+
+    const canvas = frameCanvasRef.current
+
+    if (!canvas) {
+      return
+    }
+
+    const updateSize = () => {
+      const rect = canvas.getBoundingClientRect()
+      const size = calculateContainedFrameSize(
+        rect.width,
+        rect.height,
+        selectedPage.originalWidth,
+        selectedPage.originalHeight,
+      )
+
+      setFrameImageSize((current) =>
+        current &&
+        size &&
+        Math.abs(current.width - size.width) < 0.5 &&
+        Math.abs(current.height - size.height) < 0.5
+          ? current
+          : size,
+      )
+    }
+
+    updateSize()
+
+    const resizeObserver = new ResizeObserver(updateSize)
+    resizeObserver.observe(canvas)
+    window.addEventListener('resize', updateSize)
+
+    return () => {
+      resizeObserver.disconnect()
+      window.removeEventListener('resize', updateSize)
+    }
+  }, [
+    isFrameEditing,
+    selectedPage,
+    selectedPage?.originalWidth,
+    selectedPage?.originalHeight,
+  ])
 
   async function addImagePage(dataUrl: string, name: string, sourceSize = 0) {
     const image = await loadImage(dataUrl)
@@ -447,6 +531,7 @@ function App() {
       return
     }
 
+    setFrameImageSize(null)
     setFrameEditorPageId(selectedPage.id)
     setDraftCorners(
       cloneCorners(selectedPage.cropCorners ?? getDefaultCorners(selectedPage)),
@@ -492,6 +577,7 @@ function App() {
       )
       setFrameEditorPageId(null)
       setDraftCorners(null)
+      setFrameDrag(null)
       setNotice('已按手动边框完成透视矫正')
     } catch (error) {
       setNotice(`${getErrorMessage(error)}，请微调边框后重试`)
@@ -503,7 +589,7 @@ function App() {
   function handleCancelFrameEditor() {
     setFrameEditorPageId(null)
     setDraftCorners(null)
-    setDraggingCorner(null)
+    setFrameDrag(null)
     setNotice('已退出手动边框编辑')
   }
 
@@ -588,37 +674,59 @@ function App() {
   }
 
   function startCornerDrag(
-    event: ReactPointerEvent<HTMLButtonElement>,
+    event: ReactPointerEvent<Element>,
     corner: CornerKey,
   ) {
     event.preventDefault()
     event.currentTarget.setPointerCapture(event.pointerId)
-    setDraggingCorner(corner)
+    setFrameDrag({ type: 'corner', corner })
     updateDraftCorner(corner, event.clientX, event.clientY)
   }
 
-  function handleCornerMove(event: ReactPointerEvent<HTMLElement>) {
-    if (!draggingCorner) {
+  function startEdgeDrag(
+    event: ReactPointerEvent<SVGLineElement>,
+    edge: FrameEdgeKey,
+  ) {
+    event.preventDefault()
+
+    if (!draftCorners) {
       return
     }
 
-    updateDraftCorner(draggingCorner, event.clientX, event.clientY)
+    const point = getImagePointFromClient(event.clientX, event.clientY)
+
+    if (!point) {
+      return
+    }
+
+    event.currentTarget.setPointerCapture(event.pointerId)
+    setFrameDrag({
+      type: 'edge',
+      edge,
+      startPoint: point,
+      startCorners: cloneCorners(draftCorners),
+    })
+  }
+
+  function handleFrameMove(event: ReactPointerEvent<HTMLElement | SVGElement>) {
+    if (!frameDrag) {
+      return
+    }
+
+    if (frameDrag.type === 'corner') {
+      updateDraftCorner(frameDrag.corner, event.clientX, event.clientY)
+      return
+    }
+
+    updateDraftEdge(frameDrag, event.clientX, event.clientY)
   }
 
   function updateDraftCorner(corner: CornerKey, clientX: number, clientY: number) {
-    const rect = frameImageRef.current?.getBoundingClientRect()
+    const point = getImagePointFromClient(clientX, clientY)
 
-    if (!rect || !selectedPage || rect.width === 0 || rect.height === 0) {
+    if (!point) {
       return
     }
-
-    const point = mapClientPointToImagePoint(
-      clientX,
-      clientY,
-      rect,
-      selectedPage.originalWidth,
-      selectedPage.originalHeight,
-    )
 
     setDraftCorners((current) =>
       current
@@ -627,6 +735,51 @@ function App() {
             [corner]: point,
           }
         : current,
+    )
+  }
+
+  function updateDraftEdge(
+    drag: Extract<FrameDragState, { type: 'edge' }>,
+    clientX: number,
+    clientY: number,
+  ) {
+    if (!selectedPage) {
+      return
+    }
+
+    const point = getImagePointFromClient(clientX, clientY)
+
+    if (!point) {
+      return
+    }
+
+    setDraftCorners(
+      moveFrameEdge(
+        drag.edge,
+        drag.startCorners,
+        {
+          x: point.x - drag.startPoint.x,
+          y: point.y - drag.startPoint.y,
+        },
+        selectedPage.originalWidth,
+        selectedPage.originalHeight,
+      ),
+    )
+  }
+
+  function getImagePointFromClient(clientX: number, clientY: number) {
+    const rect = frameImageRef.current?.getBoundingClientRect()
+
+    if (!rect || !selectedPage || rect.width === 0 || rect.height === 0) {
+      return null
+    }
+
+    return mapClientPointToImagePoint(
+      clientX,
+      clientY,
+      rect,
+      selectedPage.originalWidth,
+      selectedPage.originalHeight,
     )
   }
 
@@ -722,7 +875,7 @@ function App() {
     isFrameEditing && selectedPage ? 'editing' : selectedPage ? 'page' : 'empty'
 
   return (
-    <main className="scanner-shell">
+    <main className="scanner-shell" data-frame-editing={isFrameEditing}>
       <input
         ref={fileInputRef}
         className="sr-only"
@@ -847,14 +1000,16 @@ function App() {
           {isFrameEditing && selectedPage && draftCorners ? (
             <div className="frame-editor">
               <div
+                ref={frameCanvasRef}
                 className="frame-editor-canvas"
               >
                 <div
                   ref={frameImageRef}
                   className="frame-editor-image"
-                  onPointerMove={handleCornerMove}
-                  onPointerUp={() => setDraggingCorner(null)}
-                  onPointerCancel={() => setDraggingCorner(null)}
+                  style={getFrameImageStyle(frameImageSize)}
+                  onPointerMove={handleFrameMove}
+                  onPointerUp={() => setFrameDrag(null)}
+                  onPointerCancel={() => setFrameDrag(null)}
                 >
                   <img src={selectedPage.originalDataUrl} alt={selectedPage.name} />
                   <div className="frame-overlay">
@@ -865,6 +1020,18 @@ function App() {
                       aria-hidden="true"
                     >
                       <polygon points={toSvgPoints(draftCorners, selectedPage)} />
+                      {FRAME_EDGES.map((edge) => (
+                        <line
+                          key={edge.key}
+                          className="frame-edge-hitbox"
+                          {...getEdgeLineProps(edge, draftCorners, selectedPage)}
+                          onPointerDown={(event) => startEdgeDrag(event, edge.key)}
+                          onPointerMove={handleFrameMove}
+                          onPointerUp={() => setFrameDrag(null)}
+                          onPointerCancel={() => setFrameDrag(null)}
+                          aria-label={`拖动${edge.label}`}
+                        />
+                      ))}
                     </svg>
                     {CORNERS.map((corner) => (
                       <button
@@ -873,9 +1040,9 @@ function App() {
                         type="button"
                         style={getCornerStyle(draftCorners[corner.key], selectedPage)}
                         onPointerDown={(event) => startCornerDrag(event, corner.key)}
-                        onPointerMove={handleCornerMove}
-                        onPointerUp={() => setDraggingCorner(null)}
-                        onPointerCancel={() => setDraggingCorner(null)}
+                        onPointerMove={handleFrameMove}
+                        onPointerUp={() => setFrameDrag(null)}
+                        onPointerCancel={() => setFrameDrag(null)}
                         aria-label={`拖动${corner.label}`}
                         title={`拖动${corner.label}`}
                       >
@@ -886,7 +1053,7 @@ function App() {
                 </div>
               </div>
               <div className="frame-editor-actions">
-                <span>拖动四个角点贴合纸张边缘</span>
+                <span>拖动四角或四边贴合纸张边缘</span>
                 <button type="button" onClick={handleResetFrameCorners}>
                   重置边框
                 </button>
@@ -1502,6 +1669,33 @@ function getCornerStyle(point: CornerPoint, page: ScanPage) {
   return {
     left: `${(point.x / page.originalWidth) * 100}%`,
     top: `${(point.y / page.originalHeight) * 100}%`,
+  }
+}
+
+function getEdgeLineProps(
+  edge: (typeof FRAME_EDGES)[number],
+  corners: CornerPoints,
+  page: ScanPage,
+) {
+  const from = corners[edge.from]
+  const to = corners[edge.to]
+
+  return {
+    x1: (from.x / page.originalWidth) * 100,
+    y1: (from.y / page.originalHeight) * 100,
+    x2: (to.x / page.originalWidth) * 100,
+    y2: (to.y / page.originalHeight) * 100,
+  }
+}
+
+function getFrameImageStyle(size: FrameSize | null) {
+  if (!size) {
+    return undefined
+  }
+
+  return {
+    width: `${size.width}px`,
+    height: `${size.height}px`,
   }
 }
 

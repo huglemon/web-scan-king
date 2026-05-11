@@ -373,27 +373,30 @@ button svg {
 
 .frame-editor-canvas {
   width: 100%;
-  height: 100%;
   display: grid;
   place-items: center;
   max-width: 100%;
   max-height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 
 .frame-editor-image {
   position: relative;
-  display: inline-block;
+  display: block;
   max-width: 100%;
   max-height: 100%;
+  overflow: hidden;
   border-radius: 8px;
   background: #ffffff;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .frame-editor-image img {
   display: block;
-  max-width: 100%;
-  max-height: 100%;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
   user-select: none;
   pointer-events: none;
 }
@@ -407,13 +410,14 @@ button svg {
 .frame-overlay {
   z-index: 3;
   touch-action: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .frame-polygon {
   width: 100%;
   height: 100%;
-  overflow: visible;
-  pointer-events: none;
+  overflow: hidden;
+  pointer-events: auto;
 }
 
 .frame-polygon polygon {
@@ -421,9 +425,25 @@ button svg {
   stroke: var(--accent-coral);
   stroke-width: 0.8;
   vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
+.frame-edge-hitbox {
+  stroke: transparent;
+  stroke-width: 12;
+  vector-effect: non-scaling-stroke;
+  pointer-events: stroke;
+  touch-action: none;
+  cursor: grab;
+}
+
+.frame-edge-hitbox:active {
+  cursor: grabbing;
 }
 
 .corner-handle {
+  appearance: none;
+  -webkit-appearance: none;
   position: absolute;
   width: 28px;
   min-height: 28px;
@@ -434,15 +454,26 @@ button svg {
   background: var(--accent-coral);
   transform: translate(-50%, -50%);
   touch-action: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
   cursor: grab;
+  outline: none;
+  box-shadow: 0 3px 10px rgba(32, 53, 44, 0.18);
 }
 
 .corner-handle:hover:not(:disabled) {
   transform: translate(-50%, -50%) scale(1.08);
 }
 
+.corner-handle:focus,
+.corner-handle:focus-visible {
+  outline: none;
+}
+
 .corner-handle:active {
   cursor: grabbing;
+  border-color: #ffffff;
+  box-shadow: 0 3px 10px rgba(32, 53, 44, 0.18);
 }
 
 .corner-handle span {
@@ -922,6 +953,15 @@ button svg {
     overflow-y: hidden;
   }
 
+  .scanner-shell[data-frame-editing='true'] .workspace {
+    grid-template-rows: minmax(0, 1fr);
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .scanner-shell[data-frame-editing='true'] .workspace-header {
+    display: none;
+  }
+
   .workspace-header {
     width: 100%;
     max-width: 100%;
@@ -1004,6 +1044,7 @@ button svg {
   .preview-stage[data-preview-state='editing'] {
     padding: 10px;
     overflow: hidden;
+    align-content: stretch;
   }
 
   .desktop-preview-frame {
@@ -1176,6 +1217,11 @@ button svg {
     box-shadow: 0 -18px 40px rgba(32, 53, 44, 0.13);
     backdrop-filter: blur(18px);
     overflow: hidden;
+  }
+
+  .scanner-shell[data-frame-editing='true'] .mobile-page-strip,
+  .scanner-shell[data-frame-editing='true'] .mobile-bottom-tools {
+    display: none;
   }
 
   .mobile-tool-tabs {
@@ -1395,15 +1441,17 @@ button svg {
     width: 100%;
     height: 100%;
     gap: 8px;
+    overflow: hidden;
+    grid-template-rows: minmax(0, 1fr) auto;
   }
 
   .frame-editor-canvas {
     display: grid;
     place-items: center;
     width: 100%;
-    height: 100%;
     max-width: 100%;
     max-height: 100%;
+    overflow: hidden;
   }
 
   .frame-editor-image {
@@ -1412,28 +1460,36 @@ button svg {
   }
 
   .frame-editor-image img {
-    width: auto;
-    height: auto;
-    max-width: 100%;
-    max-height: 100%;
+    width: 100%;
+    height: 100%;
     object-fit: contain;
   }
 
   .frame-editor-actions {
+    width: 100%;
     justify-content: stretch;
     gap: 6px;
-    padding: 8px;
+    flex-wrap: nowrap;
+    padding: 7px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .frame-editor-actions::-webkit-scrollbar {
+    display: none;
   }
 
   .frame-editor-actions span {
-    width: 100%;
+    display: none;
+    width: auto;
     margin-right: 0;
     font-size: 11px;
   }
 
   .frame-editor-actions button {
-    flex: 1 1 calc(50% - 8px);
-    min-height: 34px;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 36px;
     padding-inline: 8px;
     font-size: 12px;
   }
