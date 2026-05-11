@@ -30,6 +30,7 @@ import {
   FILTER_PRESETS,
   type ScanFilterId,
   createPageName,
+  downloadBlob,
   downloadDataUrl,
   filterSupportsEnhanceStrength,
   formatBytes,
@@ -50,6 +51,7 @@ import {
   loadOpenCv,
   manualExtractDocument,
 } from './lib/scan'
+import { createZipFromDataUrls } from './lib/zip'
 
 type ScanPage = {
   id: string
@@ -80,7 +82,7 @@ type DraftStrengthState = {
   value: number
 } | null
 
-type MobileToolTab = 'quick' | 'filters' | 'pages'
+type MobileToolTab = 'quick' | 'filters' | 'pages' | 'export'
 
 const DEFAULT_FILTER: ScanFilterId = 'clean'
 const MOBILE_FILTER_IDS = new Set<ScanFilterId>([
@@ -630,24 +632,77 @@ function App() {
     )
   }
 
-  function exportCurrentPng() {
+  function exportCurrentImage() {
     if (!selectedPage) {
       return
     }
 
+    const pageNumber = selectedIndex >= 0 ? selectedIndex + 1 : 1
+
     downloadDataUrl(
       selectedPage.outputDataUrl,
-      `${selectedPage.name || 'scan-page'}.jpg`,
+      `${getExportBaseName(selectedPage.name, `scan-page-${pageNumber}`)}.jpg`,
     )
     setNotice('当前页面已导出为图片')
   }
 
-  async function exportPdf() {
+  async function exportCurrentPdf() {
+    if (!selectedPage) {
+      return
+    }
+
+    const pageNumber = selectedIndex >= 0 ? selectedIndex + 1 : 1
+
+    setBusy({ pageId: selectedPage.id, label: '正在生成当前页 PDF' })
+
+    try {
+      await exportPagesToPdf(
+        [
+          {
+            dataUrl: selectedPage.outputDataUrl,
+            name: selectedPage.name,
+          },
+        ],
+        `${getExportBaseName(selectedPage.name, `scan-page-${pageNumber}`)}.pdf`,
+      )
+      setNotice('当前页面已导出为 PDF')
+    } catch (error) {
+      setNotice(getErrorMessage(error))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function exportAllImages() {
     if (pages.length === 0) {
       return
     }
 
-    setBusy({ label: '正在生成 PDF' })
+    setBusy({ label: '正在打包全部图片' })
+
+    try {
+      const zipBlob = createZipFromDataUrls(
+        pages.map((page, index) => ({
+          name: `${getExportBaseName(page.name, `scan-page-${index + 1}`)}.jpg`,
+          dataUrl: page.outputDataUrl,
+        })),
+      )
+
+      downloadBlob(zipBlob, `scan-images-${getExportDate()}.zip`)
+      setNotice('全部页面图片已打包导出')
+    } catch (error) {
+      setNotice(getErrorMessage(error))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function exportAllPdf() {
+    if (pages.length === 0) {
+      return
+    }
+
+    setBusy({ label: '正在生成全部页面 PDF' })
 
     try {
       await exportPagesToPdf(
@@ -657,7 +712,7 @@ function App() {
         })),
         `scan-${new Date().toISOString().slice(0, 10)}.pdf`,
       )
-      setNotice('PDF 已生成')
+      setNotice('全部页面 PDF 已生成')
     } catch (error) {
       setNotice(getErrorMessage(error))
     } finally {
@@ -746,7 +801,7 @@ function App() {
         <div className="export-stack">
           <button
             type="button"
-            onClick={exportCurrentPng}
+            onClick={exportCurrentImage}
             disabled={!selectedPage || Boolean(busy)}
             title="导出当前页 JPG"
           >
@@ -755,7 +810,7 @@ function App() {
           </button>
           <button
             type="button"
-            onClick={() => void exportPdf()}
+            onClick={() => void exportAllPdf()}
             disabled={pages.length === 0 || Boolean(busy)}
             title="导出所有页面 PDF"
           >
@@ -930,6 +985,17 @@ function App() {
                   拍摄导入
                 </button>
               </div>
+              <label className="empty-auto-crop-toggle">
+                <input
+                  type="checkbox"
+                  checked={autoCropOnImport}
+                  onChange={(event) =>
+                    setAutoCropOnImport(event.currentTarget.checked)
+                  }
+                  disabled={Boolean(busy)}
+                />
+                <span>导入后自动裁切</span>
+              </label>
             </div>
           )}
         </div>
@@ -1098,6 +1164,15 @@ function App() {
               <Layers3 aria-hidden="true" />
               页面
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mobileToolTab === 'export'}
+              onClick={() => setMobileToolTab('export')}
+            >
+              <FileDown aria-hidden="true" />
+              导出
+            </button>
           </div>
 
           {mobileToolTab === 'quick' && (
@@ -1147,24 +1222,6 @@ function App() {
                 >
                   <RefreshCcw aria-hidden="true" />
                   还原
-                </button>
-                <button
-                  type="button"
-                  onClick={exportCurrentPng}
-                  disabled={!selectedPage || Boolean(busy)}
-                  title="导出当前页 JPG"
-                >
-                  <Download aria-hidden="true" />
-                  图片
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void exportPdf()}
-                  disabled={pages.length === 0 || Boolean(busy)}
-                  title="导出所有页面 PDF"
-                >
-                  <FileDown aria-hidden="true" />
-                  PDF
                 </button>
               </div>
             </div>
@@ -1262,6 +1319,49 @@ function App() {
                     </div>
                   </article>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {mobileToolTab === 'export' && (
+            <div className="mobile-tool-panel" role="tabpanel">
+              <div className="mobile-export-row">
+                <button
+                  type="button"
+                  onClick={exportCurrentImage}
+                  disabled={!selectedPage || Boolean(busy)}
+                  title="导出当前页 JPG"
+                >
+                  <Download aria-hidden="true" />
+                  当前页图片
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void exportCurrentPdf()}
+                  disabled={!selectedPage || Boolean(busy)}
+                  title="导出当前页 PDF"
+                >
+                  <FileDown aria-hidden="true" />
+                  当前页 PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void exportAllImages()}
+                  disabled={pages.length === 0 || Boolean(busy)}
+                  title="导出全部页面图片"
+                >
+                  <FileImage aria-hidden="true" />
+                  全部图片
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void exportAllPdf()}
+                  disabled={pages.length === 0 || Boolean(busy)}
+                  title="导出全部页面 PDF"
+                >
+                  <FileDown aria-hidden="true" />
+                  全部 PDF
+                </button>
               </div>
             </div>
           )}
@@ -1409,6 +1509,20 @@ function clamp(value: number, min: number, max: number) {
 
 function createId() {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`
+}
+
+function getExportDate() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function getExportBaseName(name: string, fallback: string) {
+  const safeName = name
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/\s+/g, ' ')
+    .slice(0, 80)
+
+  return safeName || fallback
 }
 
 function getErrorMessage(error: unknown) {
