@@ -2,8 +2,9 @@ import type {
   ChangeEvent,
   DragEvent,
   PointerEvent as ReactPointerEvent,
+  UIEvent,
 } from 'react'
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDown,
   ArrowUp,
@@ -79,7 +80,19 @@ type DraftStrengthState = {
   value: number
 } | null
 
+type MobileToolTab = 'quick' | 'filters' | 'pages'
+
 const DEFAULT_FILTER: ScanFilterId = 'clean'
+const MOBILE_FILTER_IDS = new Set<ScanFilterId>([
+  'original',
+  'clean',
+  'gray',
+  'contrast',
+  'mono',
+])
+const MOBILE_FILTER_PRESETS = FILTER_PRESETS.filter((preset) =>
+  MOBILE_FILTER_IDS.has(preset.id),
+)
 
 const CORNERS: Array<{ key: CornerKey; label: string }> = [
   { key: 'topLeftCorner', label: '左上角' },
@@ -94,6 +107,8 @@ function App() {
   const [busy, setBusy] = useState<BusyState | null>(null)
   const [notice, setNotice] = useState('导入图片后即可开始处理')
   const [autoCropOnImport, setAutoCropOnImport] = useState(false)
+  const [mobileToolTab, setMobileToolTab] = useState<MobileToolTab>('quick')
+  const [mobilePreviewIndex, setMobilePreviewIndex] = useState(0)
   const [frameEditorPageId, setFrameEditorPageId] = useState<string | null>(
     null,
   )
@@ -103,11 +118,17 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
   const frameCanvasRef = useRef<HTMLDivElement>(null)
+  const mobilePreviewRef = useRef<HTMLDivElement>(null)
 
   const selectedPage = useMemo(
     () => pages.find((page) => page.id === selectedId) ?? pages[0] ?? null,
     [pages, selectedId],
   )
+  const selectedIndex = selectedPage
+    ? pages.findIndex((page) => page.id === selectedPage.id)
+    : -1
+  const mobileDisplayIndex =
+    mobilePreviewIndex >= pages.length ? pages.length : selectedIndex
   const totalSize = pages.reduce((sum, page) => sum + page.sourceSize, 0)
   const isFrameEditing = Boolean(
     selectedPage &&
@@ -132,6 +153,20 @@ function App() {
     activeDraftStrength ??
     selectedPage?.enhanceStrength ??
     DEFAULT_ENHANCE_STRENGTH
+
+  useEffect(() => {
+    const preview = mobilePreviewRef.current
+
+    if (!preview || selectedIndex < 0 || isFrameEditing) {
+      return
+    }
+
+    preview.scrollTo({
+      left: preview.clientWidth * selectedIndex,
+      behavior: 'auto',
+    })
+    setMobilePreviewIndex(selectedIndex)
+  }, [selectedIndex, pages.length, isFrameEditing])
 
   async function addImagePage(dataUrl: string, name: string, sourceSize = 0) {
     const image = await loadImage(dataUrl)
@@ -219,6 +254,26 @@ function App() {
   async function handleDrop(event: DragEvent<HTMLElement>) {
     event.preventDefault()
     await importFiles(Array.from(event.dataTransfer.files))
+  }
+
+  function handleMobilePreviewScroll(event: UIEvent<HTMLDivElement>) {
+    const { clientWidth, scrollLeft } = event.currentTarget
+
+    if (clientWidth <= 0 || pages.length === 0 || isFrameEditing) {
+      return
+    }
+
+    const nextIndex = Math.min(
+      pages.length,
+      Math.max(0, Math.round(scrollLeft / clientWidth)),
+    )
+    setMobilePreviewIndex(nextIndex)
+
+    const nextPage = nextIndex < pages.length ? pages[nextIndex] : null
+
+    if (nextPage && nextPage.id !== selectedId) {
+      setSelectedId(nextPage.id)
+    }
   }
 
   async function applyVariant(
@@ -730,7 +785,9 @@ function App() {
         <div
           className="preview-stage"
           data-preview-state={previewState}
+          ref={selectedPage && !isFrameEditing ? mobilePreviewRef : undefined}
           aria-busy={Boolean(busy)}
+          onScroll={selectedPage && !isFrameEditing ? handleMobilePreviewScroll : undefined}
           onDragOver={(event) => event.preventDefault()}
           onDrop={(event) => void handleDrop(event)}
         >
@@ -790,7 +847,50 @@ function App() {
             </div>
           ) : selectedPage ? (
             <>
-              <img src={selectedPage.outputDataUrl} alt={selectedPage.name} />
+              <img
+                className="desktop-preview-image"
+                src={selectedPage.outputDataUrl}
+                alt={selectedPage.name}
+              />
+              {pages.map((page, index) => (
+                <section
+                  className="mobile-page-slide"
+                  data-selected={page.id === selectedPage.id}
+                  key={page.id}
+                  aria-label={`第 ${index + 1} 页`}
+                >
+                  <div className="mobile-page-image-frame">
+                    <img src={page.outputDataUrl} alt={page.name} />
+                  </div>
+                </section>
+              ))}
+              <section
+                className="mobile-page-slide mobile-import-slide"
+                aria-label="继续导入"
+              >
+                <div className="mobile-import-card">
+                  <ImagePlus aria-hidden="true" />
+                  <strong>继续导入页面</strong>
+                  <div className="mobile-import-actions">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={Boolean(busy)}
+                    >
+                      <ImagePlus aria-hidden="true" />
+                      上传图片
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => cameraInputRef.current?.click()}
+                      disabled={Boolean(busy)}
+                    >
+                      <Camera aria-hidden="true" />
+                      拍摄导入
+                    </button>
+                  </div>
+                </div>
+              </section>
               {busy?.pageId === selectedPage.id && (
                 <div className="preview-busy">
                   <LoaderCircle aria-hidden="true" className="spin" />
@@ -808,9 +908,49 @@ function App() {
               </div>
               <h2>拖入或上传图片开始扫描</h2>
               <p>支持多图导入、拍照、增强、旋转和 PDF 导出。</p>
+              <div className="mobile-empty-actions">
+                <button
+                  className="primary-action"
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={Boolean(busy)}
+                >
+                  <ImagePlus aria-hidden="true" />
+                  上传图片
+                </button>
+                <button
+                  className="secondary-action"
+                  type="button"
+                  onClick={() => cameraInputRef.current?.click()}
+                  disabled={Boolean(busy)}
+                >
+                  <Camera aria-hidden="true" />
+                  拍摄导入
+                </button>
+              </div>
             </div>
           )}
         </div>
+
+        {pages.length > 0 && !isFrameEditing && (
+          <div className="mobile-page-strip">
+            <span>
+              {mobileDisplayIndex >= pages.length
+                ? `${pages.length} 页 · 继续导入`
+                : `${mobileDisplayIndex + 1} / ${pages.length}`}
+            </span>
+            {mobileDisplayIndex < pages.length && (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={Boolean(busy)}
+              >
+                <ImagePlus aria-hidden="true" />
+                继续导入
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="tool-band">
           <div className="tool-group">
@@ -922,6 +1062,208 @@ function App() {
           </span>
           <span>{selectedPage?.scanned ? '已透视矫正' : '待裁切'}</span>
         </footer>
+
+        <div
+          className="mobile-bottom-tools"
+          data-active-tab={mobileToolTab}
+          aria-label="移动端工具栏"
+        >
+          <div className="mobile-tool-tabs" role="tablist" aria-label="工具分类">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mobileToolTab === 'quick'}
+              onClick={() => setMobileToolTab('quick')}
+            >
+              <ScanLine aria-hidden="true" />
+              常用
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mobileToolTab === 'filters'}
+              onClick={() => setMobileToolTab('filters')}
+            >
+              <Sparkles aria-hidden="true" />
+              滤镜
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mobileToolTab === 'pages'}
+              onClick={() => setMobileToolTab('pages')}
+            >
+              <Layers3 aria-hidden="true" />
+              页面
+            </button>
+          </div>
+
+          {mobileToolTab === 'quick' && (
+            <div className="mobile-tool-panel" role="tabpanel">
+              <div className="mobile-action-row">
+                <button
+                  type="button"
+                  onClick={() => void handleAutoScan()}
+                  disabled={!selectedPage || Boolean(busy)}
+                  title="自动识别纸张边缘"
+                >
+                  <Wand2 aria-hidden="true" />
+                  自动裁切
+                </button>
+                <button
+                  type="button"
+                  onClick={openFrameEditor}
+                  disabled={!selectedPage || Boolean(busy)}
+                  title="手动拖动四角边框并透视矫正"
+                >
+                  <Crop aria-hidden="true" />
+                  手动边框
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectedPage && void rotatePage(selectedPage, -90)}
+                  disabled={!selectedPage || Boolean(busy)}
+                  title="向左旋转当前页面"
+                >
+                  <RotateCcw aria-hidden="true" />
+                  左转
+                </button>
+                <button
+                  type="button"
+                  onClick={() => selectedPage && void rotatePage(selectedPage, 90)}
+                  disabled={!selectedPage || Boolean(busy)}
+                  title="向右旋转当前页面"
+                >
+                  <RotateCw aria-hidden="true" />
+                  右转
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleResetPage()}
+                  disabled={!selectedPage || Boolean(busy)}
+                  title="还原到原始图片"
+                >
+                  <RefreshCcw aria-hidden="true" />
+                  还原
+                </button>
+                <button
+                  type="button"
+                  onClick={exportCurrentPng}
+                  disabled={!selectedPage || Boolean(busy)}
+                  title="导出当前页 JPG"
+                >
+                  <Download aria-hidden="true" />
+                  图片
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void exportPdf()}
+                  disabled={pages.length === 0 || Boolean(busy)}
+                  title="导出所有页面 PDF"
+                >
+                  <FileDown aria-hidden="true" />
+                  PDF
+                </button>
+              </div>
+            </div>
+          )}
+
+          {mobileToolTab === 'filters' && (
+            <div className="mobile-tool-panel" role="tabpanel">
+              <div className="mobile-filter-row" role="tablist" aria-label="扫描滤镜">
+                {MOBILE_FILTER_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={selectedPage?.filter === preset.id}
+                    onClick={() => void handleFilterChange(preset.id)}
+                    disabled={!selectedPage || Boolean(busy)}
+                    title={preset.description}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {mobileToolTab === 'pages' && (
+            <div className="mobile-tool-panel mobile-pages-panel" role="tabpanel">
+              <div className="mobile-page-manager">
+                {pages.length === 0 && (
+                  <div className="mobile-page-empty">
+                    <FileImage aria-hidden="true" />
+                    <span>还没有页面</span>
+                  </div>
+                )}
+
+                {pages.map((page, index) => (
+                  <article
+                    key={page.id}
+                    className="mobile-page-item"
+                    data-selected={page.id === selectedPage?.id}
+                  >
+                    <button
+                      className="mobile-page-thumb"
+                      type="button"
+                      onClick={() => setSelectedId(page.id)}
+                      aria-label={`选择第 ${index + 1} 页`}
+                    >
+                      <img src={page.outputDataUrl} alt="" />
+                    </button>
+                    <div className="mobile-page-info">
+                      <strong>{index + 1}. {page.name}</strong>
+                      <span>{page.scanned ? '已裁切' : '未裁切'} · {page.rotation}°</span>
+                    </div>
+                    <div className="mobile-page-actions">
+                      <button
+                        type="button"
+                        onClick={() => movePage(page.id, -1)}
+                        disabled={index === 0 || Boolean(busy)}
+                        title="上移"
+                      >
+                        <ArrowUp aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => movePage(page.id, 1)}
+                        disabled={index === pages.length - 1 || Boolean(busy)}
+                        title="下移"
+                      >
+                        <ArrowDown aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void rotatePage(page, -90)}
+                        disabled={Boolean(busy)}
+                        title="左转"
+                      >
+                        <RotateCcw aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void rotatePage(page, 90)}
+                        disabled={Boolean(busy)}
+                        title="右转"
+                      >
+                        <RotateCw aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deletePage(page.id)}
+                        disabled={Boolean(busy)}
+                        title="删除"
+                      >
+                        <Trash2 aria-hidden="true" />
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </section>
 
       <aside className="side-panel page-panel" aria-label="页面列表">
