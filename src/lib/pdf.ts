@@ -5,6 +5,13 @@ export type PdfPageInput = {
   name: string
 }
 
+export type UploadedPdfPreview = {
+  url: string
+  fileName: string
+  size: number
+  expiresAt: string
+}
+
 export type PdfRect = {
   x: number
   y: number
@@ -88,6 +95,28 @@ export async function createPagesPdfBlob(
   }
 
   return pdf.output('blob')
+}
+
+export async function uploadPdfForNativePreview(
+  blob: Blob,
+  fileName: string,
+): Promise<UploadedPdfPreview> {
+  const response = await fetch(
+    `/api/pdf-preview?name=${encodeURIComponent(fileName)}`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/pdf',
+      },
+      body: blob,
+    },
+  )
+
+  if (!response.ok) {
+    throw new Error('PDF 临时文件生成失败')
+  }
+
+  return response.json() as Promise<UploadedPdfPreview>
 }
 
 function getImageFormat(dataUrl: string) {

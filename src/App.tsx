@@ -49,7 +49,14 @@ import {
   readFileAsDataUrl,
   renderImageVariant,
 } from './lib/image'
-import { createPagesPdfBlob, exportPagesToPdf } from './lib/pdf'
+import {
+  createPagesPdfBlob,
+  exportPagesToPdf,
+  type PdfPageInput,
+  type UploadedPdfPreview,
+  uploadPdfForNativePreview,
+} from './lib/pdf'
+import { isWechatBrowser, openWechatPdfPreview } from './lib/wechat'
 import {
   autoExtractDocument,
   type CornerKey,
@@ -91,8 +98,11 @@ type DraftStrengthState = {
 } | null
 
 type PdfPreviewState = {
-  url: string
   fileName: string
+  pages: PdfPageInput[]
+  objectUrl?: string
+  nativeUrl?: string
+  size?: number
 } | null
 
 type MobileToolTab = 'quick' | 'filters' | 'pages' | 'export'
@@ -116,8 +126,8 @@ const MOBILE_FILTER_IDS = new Set<ScanFilterId>([
 const MOBILE_FILTER_PRESETS = FILTER_PRESETS.filter((preset) =>
   MOBILE_FILTER_IDS.has(preset.id),
 )
-const IS_WECHAT_BROWSER =
-  /MicroMessenger/i.test(globalThis.navigator?.userAgent ?? '')
+const IS_WECHAT_BROWSER = isWechatBrowser()
+const NATIVE_PDF_PREVIEW_TIMEOUT = 1800
 
 const CORNERS: Array<{ key: CornerKey; label: string }> = [
   { key: 'topLeftCorner', label: '左上角' },
@@ -205,11 +215,11 @@ function App() {
 
   useEffect(() => {
     return () => {
-      if (pdfPreview?.url) {
-        URL.revokeObjectURL(pdfPreview.url)
+      if (pdfPreview?.objectUrl) {
+        URL.revokeObjectURL(pdfPreview.objectUrl)
       }
     }
-  }, [pdfPreview?.url])
+  }, [pdfPreview?.objectUrl])
 
   useEffect(() => {
     const preview = mobilePreviewRef.current
@@ -835,8 +845,7 @@ function App() {
 
       if (IS_WECHAT_BROWSER) {
         const blob = await createPagesPdfBlob(pdfPages, fileName)
-        openPdfPreview(blob, fileName)
-        setNotice('已生成 PDF 预览，微信内不再触发下载')
+        await previewPdfInWeChat(blob, fileName, pdfPages)
         return
       }
 
@@ -889,8 +898,7 @@ function App() {
 
       if (IS_WECHAT_BROWSER) {
         const blob = await createPagesPdfBlob(pdfPages, fileName)
-        openPdfPreview(blob, fileName)
-        setNotice('已生成多页 PDF 预览，微信内不再触发下载')
+        await previewPdfInWeChat(blob, fileName, pdfPages)
         return
       }
 
@@ -903,22 +911,46 @@ function App() {
     }
   }
 
-  function openPdfPreview(blob: Blob, fileName: string) {
-    const url = URL.createObjectURL(blob)
+  async function previewPdfInWeChat(
+    blob: Blob,
+    fileName: string,
+    pdfPages: PdfPageInput[],
+  ) {
+    let previewFile: UploadedPdfPreview | null = null
 
-    setPdfPreview((current) => {
-      if (current?.url) {
-        URL.revokeObjectURL(current.url)
-      }
+    try {
+      previewFile = await uploadPdfForNativePreview(blob, fileName)
+      await openWechatPdfPreview(previewFile, NATIVE_PDF_PREVIEW_TIMEOUT)
+      setNotice('已调用微信原生 PDF 预览')
+    } catch (error) {
+      const objectUrl = URL.createObjectURL(blob)
 
-      return { url, fileName }
-    })
+      setPdfPreview((current) => {
+        if (current?.objectUrl) {
+          URL.revokeObjectURL(current.objectUrl)
+        }
+
+        return {
+          fileName,
+          pages: pdfPages,
+          objectUrl,
+          nativeUrl: previewFile?.url,
+          size: previewFile?.size ?? blob.size,
+        }
+      })
+
+      setNotice(
+        previewFile
+          ? '微信原生预览未响应，已打开页面预览'
+          : getErrorMessage(error),
+      )
+    }
   }
 
   function closePdfPreview() {
     setPdfPreview((current) => {
-      if (current?.url) {
-        URL.revokeObjectURL(current.url)
+      if (current?.objectUrl) {
+        URL.revokeObjectURL(current.objectUrl)
       }
 
       return null
@@ -1700,16 +1732,28 @@ function App() {
                 <X aria-hidden="true" />
               </button>
             </header>
-            <iframe
-              title={pdfPreview.fileName}
-              src={pdfPreview.url}
-              className="pdf-preview-frame"
-            />
-            {IS_WECHAT_BROWSER && (
-              <p className="pdf-preview-note">
-                微信内已隐藏图片下载。若需要作为文件转发，请使用浏览器打开或后续接入服务端文件链接。
-              </p>
-            )}
+            <div className="pdf-preview-frame" role="document">
+              {pdfPreview.pages.map((page, index) => (
+                <figure className="pdf-preview-page" key={`${page.name}-${index}`}>
+                  <img src={page.dataUrl} alt={`${page.name} PDF 页面预览`} />
+                  <figcaption>
+                    第 {index + 1} 页
+                    {pdfPreview.pages.length > 1 ? ` / ${pdfPreview.pages.length}` : ''}
+                  </figcaption>
+                </figure>
+              ))}
+            </div>
+            <div className="pdf-preview-note">
+              {pdfPreview.nativeUrl ? (
+                <a href={pdfPreview.nativeUrl} target="_blank" rel="noreferrer">
+                  打开 PDF 文件
+                </a>
+              ) : null}
+              <span>
+                微信原生 PDF 预览未响应，当前显示的是页面预览。
+                {pdfPreview.size ? ` PDF 体积 ${formatBytes(pdfPreview.size)}。` : ''}
+              </span>
+            </div>
           </div>
         </div>
       )}
