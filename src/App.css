@@ -559,17 +559,37 @@ button svg {
 }
 
 .tool-band {
-  align-items: center;
+  align-items: flex-start;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 12px;
   padding: 12px;
 }
 
 .tool-group,
-.filter-tabs {
+.filter-tabs,
+.enhance-panel,
+.strength-control,
+.strength-control span {
   display: flex;
+}
+
+.tool-group,
+.filter-tabs {
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.tool-group {
+  flex: 1 1 360px;
+}
+
+.enhance-panel {
+  min-width: min(100%, 430px);
+  flex: 1 1 430px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
 }
 
 .tool-group button,
@@ -589,6 +609,7 @@ button svg {
 }
 
 .filter-tabs {
+  align-self: stretch;
   padding: 4px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -608,6 +629,36 @@ button svg {
   border-color: var(--ink);
   color: #ffffff;
   background: var(--accent-blue);
+}
+
+.strength-control {
+  align-items: center;
+  gap: 12px;
+  padding: 9px 11px;
+  border: 1px solid rgba(44, 113, 146, 0.22);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.strength-control span {
+  min-width: 108px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.strength-control b {
+  color: var(--accent-blue);
+}
+
+.strength-control input {
+  width: 100%;
+  min-width: 150px;
+  accent-color: var(--accent-blue);
 }
 
 .workspace-footer {
@@ -825,6 +876,19 @@ button svg {
   .tool-group button,
   .filter-tabs button {
     flex: 1 1 calc(33.333% - 8px);
+  }
+
+  .enhance-panel {
+    min-width: 0;
+  }
+
+  .strength-control {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .strength-control span {
+    width: 100%;
   }
 
   .preview-stage > img {

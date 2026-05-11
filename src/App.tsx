@@ -27,12 +27,16 @@ import {
 } from 'lucide-react'
 import './App.css'
 import {
+  DEFAULT_ENHANCE_STRENGTH,
   FILTER_PRESETS,
   type ScanFilterId,
   createPageName,
   downloadDataUrl,
+  filterSupportsEnhanceStrength,
   formatBytes,
+  getFilterPreset,
   loadImage,
+  normalizeEnhanceStrength,
   normalizeRotation,
   readFileAsDataUrl,
   renderImageVariant,
@@ -60,6 +64,7 @@ type ScanPage = {
   width: number
   height: number
   filter: ScanFilterId
+  enhanceStrength: number
   rotation: number
   scanned: boolean
   cropCorners?: CornerPoints
@@ -69,6 +74,12 @@ type BusyState = {
   pageId?: string
   label: string
 }
+
+type DraftStrengthState = {
+  pageId: string
+  filter: ScanFilterId
+  value: number
+} | null
 
 const DEFAULT_FILTER: ScanFilterId = 'clean'
 
@@ -93,6 +104,7 @@ function App() {
   )
   const [draftCorners, setDraftCorners] = useState<CornerPoints | null>(null)
   const [draggingCorner, setDraggingCorner] = useState<CornerKey | null>(null)
+  const [draftStrength, setDraftStrength] = useState<DraftStrengthState>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -109,13 +121,29 @@ function App() {
       selectedPage.id === frameEditorPageId &&
       !busy,
   )
+  const selectedPreset = selectedPage
+    ? getFilterPreset(selectedPage.filter)
+    : null
+  const showEnhanceStrength = selectedPage
+    ? filterSupportsEnhanceStrength(selectedPage.filter)
+    : false
+  const activeDraftStrength =
+    draftStrength &&
+    selectedPage &&
+    draftStrength.pageId === selectedPage.id &&
+    draftStrength.filter === selectedPage.filter
+      ? draftStrength.value
+      : null
+  const visibleEnhanceStrength =
+    activeDraftStrength ??
+    selectedPage?.enhanceStrength ??
+    DEFAULT_ENHANCE_STRENGTH
 
   useEffect(() => {
     return () => {
       stopCamera()
     }
   }, [])
-
   async function addImagePage(dataUrl: string, name: string, sourceSize = 0) {
     const image = await loadImage(dataUrl)
     const originalWidth = image.naturalWidth || image.width
@@ -133,6 +161,7 @@ function App() {
       width: rendered.width,
       height: rendered.height,
       filter: DEFAULT_FILTER,
+      enhanceStrength: DEFAULT_ENHANCE_STRENGTH,
       rotation: 0,
       scanned: false,
     }
@@ -181,12 +210,23 @@ function App() {
 
   async function applyVariant(
     page: ScanPage,
-    updates: Partial<Pick<ScanPage, 'baseDataUrl' | 'filter' | 'rotation'>>,
+    updates: Partial<
+      Pick<ScanPage, 'baseDataUrl' | 'filter' | 'rotation' | 'enhanceStrength'>
+    >,
   ) {
     const nextBase = updates.baseDataUrl ?? page.baseDataUrl
     const nextFilter = updates.filter ?? page.filter
     const nextRotation = updates.rotation ?? page.rotation
-    const rendered = await renderImageVariant(nextBase, nextFilter, nextRotation)
+    const nextStrength = normalizeEnhanceStrength(
+      updates.enhanceStrength ?? page.enhanceStrength,
+    )
+    const rendered = await renderImageVariant(
+      nextBase,
+      nextFilter,
+      nextRotation,
+      undefined,
+      nextStrength,
+    )
 
     setPages((current) =>
       current.map((item) =>
@@ -194,6 +234,7 @@ function App() {
           ? {
               ...item,
               ...updates,
+              enhanceStrength: nextStrength,
               outputDataUrl: rendered.dataUrl,
               width: rendered.width,
               height: rendered.height,
@@ -208,13 +249,38 @@ function App() {
       return
     }
 
+    const preset = getFilterPreset(filter)
+    const nextStrength =
+      preset.defaultStrength ?? selectedPage.enhanceStrength
     setBusy({ pageId: selectedPage.id, label: '正在应用滤镜' })
 
     try {
-      await applyVariant(selectedPage, { filter })
-      setNotice(
-        `已切换到 ${FILTER_PRESETS.find((item) => item.id === filter)?.label}`,
-      )
+      await applyVariant(selectedPage, { filter, enhanceStrength: nextStrength })
+      setNotice(`已切换到 ${preset.label}`)
+    } catch (error) {
+      setNotice(getErrorMessage(error))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function applyEnhanceStrength(value: number) {
+    if (!selectedPage || !filterSupportsEnhanceStrength(selectedPage.filter)) {
+      return
+    }
+
+    const nextStrength = normalizeEnhanceStrength(value)
+    setDraftStrength(null)
+
+    if (nextStrength === selectedPage.enhanceStrength) {
+      return
+    }
+
+    setBusy({ pageId: selectedPage.id, label: '正在调整增强强度' })
+
+    try {
+      await applyVariant(selectedPage, { enhanceStrength: nextStrength })
+      setNotice(`增强强度已调整到 ${nextStrength}%`)
     } catch (error) {
       setNotice(getErrorMessage(error))
     } finally {
@@ -381,12 +447,18 @@ function App() {
         {
           baseDataUrl: selectedPage.originalDataUrl,
           rotation: 0,
+          enhanceStrength: DEFAULT_ENHANCE_STRENGTH,
         },
       )
       setPages((current) =>
         current.map((page) =>
           page.id === selectedPage.id
-            ? { ...page, scanned: false, cropCorners: undefined }
+            ? {
+                ...page,
+                scanned: false,
+                cropCorners: undefined,
+                enhanceStrength: DEFAULT_ENHANCE_STRENGTH,
+              }
             : page,
         ),
       )
@@ -830,20 +902,58 @@ function App() {
             </button>
           </div>
 
-          <div className="filter-tabs" role="tablist" aria-label="扫描滤镜">
-            {FILTER_PRESETS.map((preset) => (
-              <button
-                key={preset.id}
-                type="button"
-                role="tab"
-                aria-selected={selectedPage?.filter === preset.id}
-                onClick={() => void handleFilterChange(preset.id)}
-                disabled={!selectedPage || Boolean(busy)}
-                title={preset.description}
-              >
-                {preset.label}
-              </button>
-            ))}
+          <div className="enhance-panel">
+            <div className="filter-tabs" role="tablist" aria-label="扫描滤镜">
+              {FILTER_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={selectedPage?.filter === preset.id}
+                  onClick={() => void handleFilterChange(preset.id)}
+                  disabled={!selectedPage || Boolean(busy)}
+                  title={preset.description}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+
+            {showEnhanceStrength && selectedPage && selectedPreset && (
+              <label className="strength-control">
+                <span>
+                  增强强度
+                  <b>{visibleEnhanceStrength}%</b>
+                </span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="5"
+                  value={visibleEnhanceStrength}
+                  disabled={Boolean(busy)}
+                  aria-label={`${selectedPreset.label}增强强度`}
+                  onChange={(event) =>
+                    setDraftStrength({
+                      pageId: selectedPage.id,
+                      filter: selectedPage.filter,
+                      value: normalizeEnhanceStrength(
+                        event.currentTarget.valueAsNumber,
+                      ),
+                    })
+                  }
+                  onPointerUp={(event) =>
+                    void applyEnhanceStrength(event.currentTarget.valueAsNumber)
+                  }
+                  onKeyUp={(event) =>
+                    void applyEnhanceStrength(event.currentTarget.valueAsNumber)
+                  }
+                  onBlur={(event) =>
+                    void applyEnhanceStrength(event.currentTarget.valueAsNumber)
+                  }
+                />
+              </label>
+            )}
           </div>
         </div>
 

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   calculateDisplayName,
+  enhancePixels,
   fitWithin,
   formatBytes,
   getRotatedSize,
+  normalizeEnhanceStrength,
   normalizeRotation,
 } from './testable'
 
@@ -45,5 +47,53 @@ describe('display helpers', () => {
   it('uses file names when present and falls back to page numbers', () => {
     expect(calculateDisplayName(0, 'invoice.png')).toBe('invoice')
     expect(calculateDisplayName(1)).toBe('扫描页 2')
+  })
+})
+
+describe('enhancement helpers', () => {
+  it('keeps enhancement strength inside the supported range', () => {
+    expect(normalizeEnhanceStrength(-20)).toBe(0)
+    expect(normalizeEnhanceStrength(47.6)).toBe(48)
+    expect(normalizeEnhanceStrength(140)).toBe(100)
+    expect(normalizeEnhanceStrength(Number.NaN)).toBe(62)
+  })
+
+  it('normalizes shadowed paper while preserving dark ink', () => {
+    const pixels = new Uint8ClampedArray([
+      90, 90, 90, 255,
+      120, 120, 120, 255,
+      155, 155, 155, 255,
+      24, 24, 24, 255,
+    ])
+
+    const enhanced = enhancePixels(pixels, 2, 2, {
+      mode: 'gray',
+      strength: 80,
+    })
+
+    expect(enhanced[0]).toBeGreaterThan(pixels[0])
+    expect(enhanced[4]).toBeGreaterThan(pixels[4])
+    expect(enhanced[8]).toBeGreaterThan(pixels[8])
+    expect(enhanced[12]).toBeLessThan(60)
+    expect(enhanced[3]).toBe(255)
+  })
+
+  it('creates adaptive black and white output for document mode', () => {
+    const pixels = new Uint8ClampedArray([
+      235, 235, 235, 255,
+      210, 210, 210, 255,
+      80, 80, 80, 255,
+      20, 20, 20, 255,
+    ])
+
+    const enhanced = enhancePixels(pixels, 2, 2, {
+      mode: 'document',
+      strength: 70,
+    })
+
+    expect(enhanced[0]).toBe(255)
+    expect(enhanced[4]).toBe(255)
+    expect(enhanced[8]).toBeLessThan(30)
+    expect(enhanced[12]).toBeLessThan(30)
   })
 })
